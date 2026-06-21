@@ -1,0 +1,298 @@
+# =====================================================================
+# DAILY_BRIEF — configuration
+# Edit freely. Secrets live in .env, not here.
+# =====================================================================
+
+general:
+  timezone: "Europe/Warsaw"
+  ready_by: "06:30"            # when the episode should be ready on the phone
+  brief_target_minutes: 40     # desired spoken length
+  words_per_minute: 145        # Polish narration pace (used for length calibration)
+  # On Monday, look back over the whole weekend (since Friday). Otherwise 24h.
+  weekend_lookback: true
+
+claude:
+  model: "claude-opus-4-8"
+  max_tokens: 22000
+  temperature: 0.4
+
+perplexity:
+  model: "sonar-pro"
+  max_tokens_per_query: 1100
+  search_recency_filter: "day"  # overridden to "week" automatically on Monday
+
+# News-quality controls for Perplexity (search_domain_filter: max 20 per query,
+# allowlist OR denylist — not both).
+news:
+  # Global denylist — applies to every topic that has NO allowlist below.
+  # Keeps forums, social and SEO/content-farms out of the macro/rates queries.
+  deny_domains:
+    - reddit.com
+    - quora.com
+    - pinterest.com
+    - medium.com
+    - fool.com
+    - marketbeat.com
+    - benzinga.com
+    - facebook.com
+    - instagram.com
+    - tiktok.com
+    - msn.com
+  # Per-topic ALLOWLISTS (allowlist mode; max 20 each). A topic listed here is
+  # restricted to these high-quality sources instead of using the denylist.
+  allow_domains:
+    cee:                       # global wires + official CBs + top local press
+      - reuters.com
+      - bloomberg.com
+      - ft.com
+      - ecb.europa.eu
+      - nbp.pl
+      - pap.pl
+      - bankier.pl
+      - parkiet.com
+      - pb.pl
+      - forsal.pl
+      - money.pl
+      - rp.pl
+      - wnp.pl
+      - obserwatorfinansowy.pl
+      - notesfrompoland.com
+      - cnb.cz
+      - mnb.hu
+    crypto:                    # quality crypto press + on-chain/data
+      - coindesk.com
+      - cointelegraph.com
+      - theblock.co
+      - decrypt.co
+      - dlnews.com
+      - blockworks.co
+      - bloomberg.com
+      - reuters.com
+      - ft.com
+      - glassnode.com
+      - kaiko.com
+      - coinmetrics.io
+    ai_tech:                   # AI/tech press, research and primary lab sources
+      - techcrunch.com
+      - theverge.com
+      - arstechnica.com
+      - wired.com
+      - venturebeat.com
+      - theinformation.com
+      - semianalysis.com
+      - technologyreview.com
+      - arxiv.org
+      - huggingface.co
+      - anthropic.com
+      - openai.com
+      - deepmind.google
+      - bloomberg.com
+      - reuters.com
+  # Per-topic recency override (otherwise day, or week on Mondays).
+  recency_overrides:
+    ai_tech: week
+
+grok:
+  model: "grok-4.3"
+  max_output_tokens: 4000
+  enable_image_understanding: true   # let Grok read charts/tables/screenshots in posts
+  enable_video_understanding: false  # slower/costlier; usually not worth it
+  dedup_topics_from_priority: true   # exclude priority handles from the all-of-X topic pass
+  # FinTwit is TOPIC-LED: Grok searches all of X with a strong bias toward
+  # credible/expert/official sources and explicit instruction to ignore anonymous
+  # pump accounts and engagement-bait. Topics are grouped — each group runs as its
+  # own x_search pass, so the rates cluster gets dedicated depth instead of
+  # competing with crypto/equities in one query. Keywords/cashtags sharpen recall.
+  topic_groups:
+    rates_macro:               # cores: US + euro area
+      - "US Treasury yields & curve: 2s10s, 2s30s, $TNX, $TLT, $ZN, term premium, QT, SOFR, bills supply; Fed reaction function, FOMC, dots, Fed speakers"
+      - "ECB & euro rates: Bund, BTP-Bund & OAT spreads, ECB speakers, depo path; UK gilts & BoE"
+      - "Breaking macro & top-tier data (CPI, NFP, PMIs) with the market reaction and risk sentiment"
+    cee:                       # dedicated pass — the user's home market
+      - "Poland: NBP / RPP policy & commentary, POLGBs and the Polish curve, CPI & wages, bond auctions/supply, fiscal/budget & politics"
+      - "Polish zloty (USD/PLN, EUR/PLN) and CEE FX (CZK, HUF)"
+      - "Polish equities: GPW, WIG20 / WIG / mWIG40, and big single names (PKO, Pekao, Santander PL, PZU, PKN Orlen, PGE, KGHM, Allegro, CD Projekt, Dino, LPP); sector, flow & earnings narrative"
+      - "Czech CNB and Hungary MNB policy, rates and bonds; regional data"
+    cross_asset:
+      - "USD & $DXY, EUR/USD, USD/JPY (core G10 FX)"
+      - "US equities: $SPX, $NDX, $ES_F, VIX; sector rotation, breadth, positioning; major earnings / guidance"
+      - "European equities: DAX, Euro Stoxx 50, CAC 40, FTSE 100; sector & macro themes, major movers"
+      - "Commodities — energy: oil ($CL_F, WTI/Brent), natural gas; metals: gold ($GC_F), silver ($SI_F), copper ($HG_F); softs/ags: wheat, corn, soybeans, coffee, sugar"
+    crypto:                    # dedicated pass — majors + altcoin narratives + positioning
+      - "Bitcoin & Ethereum: $BTC, $ETH price action, spot ETF flows, macro correlation, regulation, key on-chain signals"
+      - "Altcoins — what is heating up: trending narratives & sectors (AI agents, memecoins, L1/L2s, DePIN, RWA, DeFi, restaking), capital rotation between sectors, breakout names and notable new launches/listings"
+      - "Crypto trading & positioning: perp funding rates, open interest, long/short ratios, leverage & liquidations, CME/perp basis, options skew, sentiment (fear/greed), whale & exchange flows"
+    ai_tech:                   # dedicated AI/tech pass on X
+      - "AI model & product launches, notable research, funding/M&A, and compute/chips (Nvidia, datacenters, inference)"
+      - "Concrete, practical AI use-cases and applications worth knowing — especially for finance, trading and analyst workflows"
+  # A 'never-miss' core: a focused second pass restricted to these accounts so
+  # their posts are always captured (xAI hard-caps allowed_x_handles at 20).
+  # The collector auto-splits this list into batches of <=20 (xAI's hard cap)
+  # and runs one x_search per batch, merging the results — so you can list as
+  # many must-read accounts as you like here.
+  priority_handles:
+    # --- central banks (official) ---
+    - federalreserve     # Fed
+    - ecb                # ECB
+    - nbppl              # Narodowy Bank Polski
+    - CNB_cz             # Czech National Bank
+    - MNB_Hungary        # Magyar Nemzeti Bank
+    # --- US rates / Fed watchers ---
+    - NickTimiraos       # WSJ — the Fed whisperer
+    - biancoresearch     # Jim Bianco — rates / macro
+    - Brad_Setser        # Treasury, flows, reserves (CFR)
+    - dampedspring       # Andy Constan — rates / liquidity / positioning
+    - concodanomics      # money-market plumbing / front-end / liquidity
+    - IanShepherdson     # Pantheon Macro — US data / Fed
+    - GregDaco           # EY chief economist — US macro
+    - SoberLook          # rates / macro curation
+    - convertbond        # Larry McDonald (Bear Traps) — rates / credit / risk
+    # --- Europe / ECB rates ---
+    - fwred              # Frederik Ducrozet (Pictet) — ECB watcher
+    - Schuldensuehner    # Holger Zschaepitz — global markets / Europe
+    - ReutersJamie       # Jamie McGeever — Reuters macro/rates columnist
+    # --- fast headlines / squawk ---
+    - DeItaone           # Walter Bloomberg — breaking headlines
+    - LiveSquawk         # real-time news wire
+    - financialjuice     # real-time news wire
+    # --- macro / FX / credit / Bloomberg ---
+    - robin_j_brooks     # Robin Brooks (Brookings) — FX / EM / dollar
+    - jnordvig           # Jens Nordvig — FX / rates
+    - lisaabramowicz1    # Bloomberg — rates / credit
+    - JohnAuthers        # Bloomberg Opinion — macro / markets
+    - tracyalloway       # Bloomberg Odd Lots
+    - LynAldenContact    # macro / liquidity / fiscal
+    - C_Barraud          # global macro data & charts aggregator
+    - economics          # Bloomberg Economics
+    # --- CEE / Poland ---
+    - mbank_research     # mBank — PL macro & rates research
+    - Pekao_Analizy      # Bank Pekao — PL macro research
+    - analizy_pkobp      # PKO BP — PL macro research
+    - spotdatapl         # SpotData (Ignacy Morawski) — PL data/macro
+    - rafalhirsch        # Rafał Hirsch — PL markets/rates journalist
+    - iggnacy            # Ignacy Morawski — PL macro economist (Puls Biznesu)
+
+voice:
+  name: "pl-PL-MarekNeural"    # or pl-PL-ZofiaNeural
+  rate: "+0%"                  # e.g. "-5%" to slow down, "+8%" to speed up
+  pitch: "+0Hz"
+  # Audio format from edge-tts: 24kHz mono mp3 @ 48kbps -> ~14 MB for 40 min.
+  silence_between_sections_ms: 700
+
+# Ordered sections. target_min drives length calibration and the prompt outline.
+# 'feeds' documents which collectors inform each section (used in the prompt).
+sections:
+  - id: open
+    title: "Otwarcie i TL;DR dnia"
+    target_min: 2
+    feeds: [market, news]
+  - id: agenda
+    title: "Kalendarz na dziś — co i o której"
+    target_min: 3
+    feeds: [calendar]
+  - id: overnight
+    title: "Sesja nocna — co się ruszyło"
+    target_min: 2
+    feeds: [market, news, social]
+  - id: rates
+    title: "Stopy i obligacje — cores i CEE"
+    target_min: 9
+    feeds: [market, news, social]
+    emphasis: true            # primary focus area
+  - id: fx
+    title: "FX, DXY i złoty"
+    target_min: 4
+    feeds: [market, news]
+  - id: equities
+    title: "Akcje — US, Europa i GPW"
+    target_min: 4
+    feeds: [market, news, social]
+  - id: commodities
+    title: "Surowce — ropa, złoto, gaz"
+    target_min: 2
+    feeds: [market, news]
+  - id: crypto
+    title: "Krypto"
+    target_min: 4
+    feeds: [market, news, social]
+  - id: fintwit
+    title: "FinTwit i sentyment"
+    target_min: 3
+    feeds: [social]
+  - id: ai_tech
+    title: "AI i technologie — nowinki i zastosowania"
+    target_min: 4
+    feeds: [news, social]
+  - id: trade_ideas
+    title: "Trade ideas"
+    target_min: 3
+    feeds: [market, news, social]
+    emphasis: true
+
+# Today's economic agenda (forward-looking).
+calendar:
+  enabled: true
+  # Free structured feed (majors: US/EU/UK/JP/...). Times are converted to your tz.
+  faireconomy_url: "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+  # Which impact levels to include from the structured feed (Holiday always kept).
+  min_impact: ["High", "Medium"]
+  # The FF feed has NO Poland/Czech/Hungary — this Perplexity query fills the CEE
+  # gap (NBP/CNB/MNB decisions + local releases) plus today's Fed/ECB speakers.
+  cee_supplement: true
+
+# Market data universe. source: fred | stooq | yahoo | coingecko
+# Symbols are resilient — a failing symbol is logged and skipped, not fatal.
+markets:
+  rates_cores:
+    - {name: "US 2Y",   source: fred,  id: "DGS2",  unit: "%"}
+    - {name: "US 5Y",   source: fred,  id: "DGS5",  unit: "%"}
+    - {name: "US 10Y",  source: fred,  id: "DGS10", unit: "%"}
+    - {name: "US 30Y",  source: fred,  id: "DGS30", unit: "%"}
+    - {name: "UST 2s10s", source: fred, id: "T10Y2Y", unit: "bp"}
+    - {name: "UST 10s vs 3M", source: fred, id: "T10Y3M", unit: "bp"}
+    - {name: "SOFR",    source: fred,  id: "SOFR",  unit: "%"}
+    - {name: "Fed funds (eff.)", source: fred, id: "DFF", unit: "%"}
+    - {name: "US 5y breakeven", source: fred, id: "T5YIE", unit: "%"}
+    - {name: "US HY OAS", source: fred, id: "BAMLH0A0HYM2", unit: "%"}
+    - {name: "DE 10Y (Bund)", source: stooq, id: "10dey.b", unit: "%"}
+    - {name: "DE 2Y",   source: stooq, id: "2dey.b", unit: "%"}
+  rates_cee:
+    - {name: "PL 10Y", source: stooq, id: "10ply.b", unit: "%"}
+    - {name: "PL 2Y",  source: stooq, id: "2ply.b",  unit: "%"}
+    - {name: "PL 5Y",  source: stooq, id: "5ply.b",  unit: "%"}
+    - {name: "CZ 10Y", source: stooq, id: "10czy.b", unit: "%"}
+    - {name: "HU 10Y", source: stooq, id: "10huy.b", unit: "%"}
+  fx:
+    - {name: "DXY",     source: yahoo, id: "DX-Y.NYB"}
+    - {name: "EUR/USD", source: yahoo, id: "EURUSD=X"}
+    - {name: "USD/PLN", source: yahoo, id: "PLN=X"}
+    - {name: "EUR/PLN", source: yahoo, id: "EURPLN=X"}
+    - {name: "USD/JPY", source: yahoo, id: "JPY=X"}
+  equities:
+    - {name: "S&P 500",   source: yahoo, id: "^GSPC"}
+    - {name: "Nasdaq 100",source: yahoo, id: "^NDX"}
+    - {name: "Dow",       source: yahoo, id: "^DJI"}
+    - {name: "DAX",       source: yahoo, id: "^GDAXI"}
+    - {name: "WIG20",     source: stooq, id: "wig20"}
+    - {name: "VIX",       source: yahoo, id: "^VIX"}
+    - {name: "S&P futures",source: yahoo, id: "ES=F"}
+  commodities:
+    - {name: "WTI",   source: yahoo, id: "CL=F"}
+    - {name: "Brent", source: yahoo, id: "BZ=F"}
+    - {name: "Gold",  source: yahoo, id: "GC=F"}
+    - {name: "Silver",source: yahoo, id: "SI=F"}
+    - {name: "NatGas (US)", source: yahoo, id: "NG=F"}
+    - {name: "Copper",source: yahoo, id: "HG=F"}
+  crypto:
+    - {name: "BTC", source: coingecko, id: "bitcoin"}
+    - {name: "ETH", source: coingecko, id: "ethereum"}
+    - {name: "SOL", source: coingecko, id: "solana"}
+
+publish:
+  podcast_title: "Poranny Brief — Makro & Rates"
+  podcast_author: "DAILY_BRIEF"
+  podcast_description: "Codzienny 40-minutowy brief makro: stopy, obligacje (cores + CEE), FX, akcje, surowce, krypto, FinTwit, AI oraz trade ideas."
+  podcast_language: "pl"
+  podcast_email: "kamilkonat@gmail.com"
+  keep_episodes: 30           # prune older MP3s from R2 beyond this many
+  feed_filename: "feed.xml"
