@@ -31,6 +31,37 @@ def _script_json(date_str: str, edition_id: str = "pl") -> "Path":
     return OUTPUT_DIR / f"script_{date_str}{tag}.json"
 
 
+def _log_data_check(log, dossier: dict) -> None:
+    """Concise data-ingestion summary for a --collect-only run, so you can verify
+    in the Actions log that Stooq/Bundesbank/FRED/Yahoo/CoinGecko/news/social all
+    came through on the production environment — before paying for script gen."""
+    m = dossier.get("market", {}) or {}
+    log.info("---------- DATA CHECK ----------")
+    for cat in ("rates_cores", "rates_cee", "fx", "equities", "commodities", "crypto"):
+        qs = m.get(cat, []) or []
+        ok = sum(1 for q in qs if q.get("ok"))
+        log.info("%-12s %d/%d ok", cat, ok, len(qs))
+    # full detail on the yields (the thing we just reworked)
+    for cat in ("rates_cores", "rates_cee"):
+        for q in m.get(cat, []) or []:
+            val = q.get("value")
+            vs = f"{val:.3f}{q.get('unit', '')}" if val is not None else "brak danych"
+            bp = q.get("change_bp")
+            chg = f" ({'+' if (bp or 0) >= 0 else ''}{bp}bp)" if bp is not None else ""
+            log.info("  %-16s %-14s src=%-14s asof=%-12s %s",
+                     q.get("name", "?"), vs + chg, q.get("source", "?"),
+                     q.get("asof", "?"), q.get("freshness", ""))
+    cee = dossier.get("cee_yields", {}) or {}
+    if cee.get("via"):
+        log.info("  cee/bund providers: %s", cee["via"])
+    for e in (m.get("errors") or [])[:12]:
+        log.info("  market error: %s", e)
+    for key in ("news", "social", "calendar"):
+        d = dossier.get(key, {}) or {}
+        log.info("%-12s %s", key, f"error: {d['error']}" if d.get("error") else "ok")
+    log.info("--------------------------------")
+
+
 def _load_script(date_str: str, edition_id: str = "pl") -> BriefScript:
     data = json.loads(_script_json(date_str, edition_id).read_text(encoding="utf-8"))
     return BriefScript(title=data["title"], summary=data["summary"],
@@ -44,6 +75,9 @@ def main() -> int:
     ap.add_argument("--local", action="store_true", help="force local publish mode")
     ap.add_argument("--reuse-dossier", action="store_true")
     ap.add_argument("--reuse-script", action="store_true")
+    ap.add_argument("--collect-only", action="store_true",
+                    help="collect + aggregate only; dump dossier/research + a data-check "
+                         "summary, then stop (no Claude script, no audio, no publish)")
     args = ap.parse_args()
 
     log = setup_logging()
@@ -71,6 +105,12 @@ def main() -> int:
             aggregate.save_dossier(dossier, date_str)
         research_text = aggregate.build_research_text(dossier, cfg)
         (OUTPUT_DIR / f"research_{date_str}.txt").write_text(research_text, encoding="utf-8")
+
+        if args.collect_only:
+            _log_data_check(log, dossier)
+            log.info("=== collect-only DONE in %.0fs | data in dossier_%s.json / research_%s.txt "
+                     "(no script/audio/publish) ===", time.time() - t0, date_str, date_str)
+            return 0
 
         # 2) per-edition: script (+ audio). Both editions feed one publish step.
         editions = cfg.get("editions", default=None) or [
