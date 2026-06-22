@@ -3,12 +3,13 @@ name: Daily Brief
 on:
   workflow_dispatch: {}          # manual "Run workflow" button
   schedule:
-    # GitHub cron is UTC and best-effort (can lag 5-30 min under load), so we
-    # start with a buffer. 03:00 UTC = 05:00 CEST (summer) / 04:00 CET (winter),
-    # which leaves plenty of room before ~06:30 Europe/Warsaw.
-    # Want fresher data? Push it later (e.g. '30 4' = 06:30 CEST) at slightly
-    # higher risk of cron lag eating into the deadline.
-    - cron: "0 3 * * *"
+    # GitHub cron is UTC. 04:30 UTC = 06:30 CEST (summer) / 05:30 CET (winter).
+    # Weekdays only (1-5 = Mon-Fri); no weekend runs. Monday still covers the
+    # weekend via the app's weekend-lookback logic.
+    # Note: GitHub cron is best-effort (can lag 5-30 min) and the pipeline takes
+    # ~5-10 min, so the episode is typically READY ~06:40-07:10. If you need it
+    # ready BY 06:30, start earlier, e.g. '45 3 * * 1-5' (05:45 CEST).
+    - cron: "30 4 * * 1-5"
 
 concurrency:
   group: daily-brief
