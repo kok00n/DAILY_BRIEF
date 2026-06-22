@@ -8,7 +8,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from .collectors import econ_calendar, market_data, news_perplexity, social_grok
+from .collectors import (cee_yields, econ_calendar, market_data,
+                         news_perplexity, social_grok)
 from .config import Config
 from .util import LookbackWindow, OUTPUT_DIR, polish_date_phrase
 
@@ -25,15 +26,22 @@ def collect_all(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
             log.error("collector '%s' failed entirely: %s", name, e)
             return {"error": str(e)}
 
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=5) as ex:
         f_market = ex.submit(safe, market_data.collect_market_data, "market")
         f_news = ex.submit(safe, news_perplexity.collect_news, "news")
         f_social = ex.submit(safe, social_grok.collect_social, "social")
         f_cal = ex.submit(safe, econ_calendar.collect_calendar, "calendar")
+        f_cee = ex.submit(safe, cee_yields.collect_cee_yields, "cee_yields")
         market = f_market.result()
         news = f_news.result()
         social = f_social.result()
         calendar = f_cal.result()
+        cee = f_cee.result()
+
+    # CEE yields come from a dedicated source (scrape + Perplexity); fold them
+    # into the market rates_cee table so they show up alongside the cores.
+    if isinstance(market, dict) and cee.get("quotes"):
+        market["rates_cee"] = cee["quotes"]
 
     dossier = {
         "generated_for": window.now.isoformat(),
@@ -48,6 +56,7 @@ def collect_all(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
         "news": news,
         "social": social,
         "calendar": calendar,
+        "cee_yields": cee,
     }
     return dossier
 

@@ -275,10 +275,10 @@ markets:
     - {name: "US HY OAS", source: fred, id: "BAMLH0A0HYM2", unit: "%"}
     - {name: "DE 10Y (Bund)", source: stooq, id: "10ydey.b", unit: "%"}
     - {name: "DE 2Y",   source: stooq, id: "2ydey.b", unit: "%"}
-  rates_cee:
-    - {name: "PL 10Y", source: stooq, id: "10yply.b", unit: "%"}
-    - {name: "CZ 10Y", source: stooq, id: "10yczy.b", unit: "%"}
-    - {name: "HU 10Y", source: stooq, id: "10yhuy.b", unit: "%"}
+  # CEE 10Y yields (PL/CZ/HU) now come from the dedicated cee_yields collector
+  # (TradingEconomics scrape + Perplexity fallback), folded into rates_cee in
+  # aggregate.py — so this list is intentionally empty.
+  rates_cee: []
   fx:
     - {name: "DXY",     source: yahoo, id: "DX-Y.NYB"}
     - {name: "EUR/USD", source: yahoo, id: "EURUSD=X"}

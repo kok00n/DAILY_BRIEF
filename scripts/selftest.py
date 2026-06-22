@@ -211,5 +211,12 @@ check("priority batches present", len(prio_tools) >= 1)
 check("topics merged with group labels",
       "[rates_macro]" in res["topics"]["text"] and "[ai_tech]" in res["topics"]["text"])
 
+print("== CEE yields snapshot parse ==")
+from dailybrief.collectors import cee_yields as cy  # noqa: E402
+parsed = cy._parse_snapshot("PL=5.74,+3\nCZ=4.10,-1\nHU=6.85,na\ngarbage line")
+check("CEE parse PL (yield+bp)", parsed.get("PL") == (5.74, 3), str(parsed.get("PL")))
+check("CEE parse CZ (negative bp)", parsed.get("CZ") == (4.10, -1), str(parsed.get("CZ")))
+check("CEE parse HU (level only)", parsed.get("HU") == (6.85, None), str(parsed.get("HU")))
+
 print(f"\n== RESULT: {PASS} passed, {FAIL} failed ==")
 sys.exit(1 if FAIL else 0)
