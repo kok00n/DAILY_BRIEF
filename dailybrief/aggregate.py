@@ -38,10 +38,15 @@ def collect_all(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
         calendar = f_cal.result()
         cee = f_cee.result()
 
-    # CEE yields come from a dedicated source (scrape + Perplexity); fold them
-    # into the market rates_cee table so they show up alongside the cores.
+    # CEE + Bund yields come from a dedicated source (scrape + Perplexity); fold
+    # them into the right market tables (PL/CZ/HU -> rates_cee, Bund -> rates_cores).
     if isinstance(market, dict) and cee.get("quotes"):
-        market["rates_cee"] = cee["quotes"]
+        cee_q = [q for q in cee["quotes"] if q.get("cat") == "cee"]
+        core_q = [q for q in cee["quotes"] if q.get("cat") == "cores"]
+        if cee_q:
+            market["rates_cee"] = cee_q
+        if core_q:
+            market["rates_cores"] = (market.get("rates_cores") or []) + core_q
 
     dossier = {
         "generated_for": window.now.isoformat(),

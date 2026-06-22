@@ -273,8 +273,8 @@ markets:
     - {name: "Fed funds (eff.)", source: fred, id: "DFF", unit: "%"}
     - {name: "US 5y breakeven", source: fred, id: "T5YIE", unit: "%"}
     - {name: "US HY OAS", source: fred, id: "BAMLH0A0HYM2", unit: "%"}
-    - {name: "DE 10Y (Bund)", source: stooq, id: "10ydey.b", unit: "%"}
-    - {name: "DE 2Y",   source: stooq, id: "2ydey.b", unit: "%"}
+    # Bund 10Y + Schatz 2Y are appended here by the cee_yields collector
+    # (TradingEconomics scrape + Perplexity fallback) — see aggregate.py.
   # CEE 10Y yields (PL/CZ/HU) now come from the dedicated cee_yields collector
   # (TradingEconomics scrape + Perplexity fallback), folded into rates_cee in
   # aggregate.py — so this list is intentionally empty.

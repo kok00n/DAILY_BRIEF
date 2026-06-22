@@ -213,10 +213,12 @@ check("topics merged with group labels",
 
 print("== CEE yields snapshot parse ==")
 from dailybrief.collectors import cee_yields as cy  # noqa: E402
-parsed = cy._parse_snapshot("PL=5.74,+3\nCZ=4.10,-1\nHU=6.85,na\ngarbage line")
+parsed = cy._parse_snapshot("PL=5.74,+3\nCZ=4.10,-1\nHU=6.85,na\nDE10=2.55,-2\nDE2=2.10,+1")
 check("CEE parse PL (yield+bp)", parsed.get("PL") == (5.74, 3), str(parsed.get("PL")))
 check("CEE parse CZ (negative bp)", parsed.get("CZ") == (4.10, -1), str(parsed.get("CZ")))
 check("CEE parse HU (level only)", parsed.get("HU") == (6.85, None), str(parsed.get("HU")))
+check("Bund DE10 parsed", parsed.get("DE10") == (2.55, -2), str(parsed.get("DE10")))
+check("Schatz DE2 parsed (no DE10 collision)", parsed.get("DE2") == (2.10, 1), str(parsed.get("DE2")))
 
 print(f"\n== RESULT: {PASS} passed, {FAIL} failed ==")
 sys.exit(1 if FAIL else 0)
