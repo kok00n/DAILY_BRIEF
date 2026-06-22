@@ -6,4 +6,5 @@ __pycache__/
 venv/
 data/episodes.json
 *.mp3
-cover.png      # large source; the optimized cover.jpg is committed instead
+# large cover source; the optimized cover.jpg is committed instead
+cover.png
