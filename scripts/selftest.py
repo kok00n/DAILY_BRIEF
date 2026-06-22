@@ -211,14 +211,54 @@ check("priority batches present", len(prio_tools) >= 1)
 check("topics merged with group labels",
       "[rates_macro]" in res["topics"]["text"] and "[ai_tech]" in res["topics"]["text"])
 
-print("== CEE yields snapshot parse ==")
+print("== CEE/Bund yields: deterministic source parsers ==")
 from dailybrief.collectors import cee_yields as cy  # noqa: E402
-parsed = cy._parse_snapshot("PL=5.74,+3\nCZ=4.10,-1\nHU=6.85,na\nDE10=2.55,-2\nDE2=2.10,+1")
-check("CEE parse PL (yield+bp)", parsed.get("PL") == (5.74, 3), str(parsed.get("PL")))
-check("CEE parse CZ (negative bp)", parsed.get("CZ") == (4.10, -1), str(parsed.get("CZ")))
-check("CEE parse HU (level only)", parsed.get("HU") == (6.85, None), str(parsed.get("HU")))
-check("Bund DE10 parsed", parsed.get("DE10") == (2.55, -2), str(parsed.get("DE10")))
-check("Schatz DE2 parsed (no DE10 collision)", parsed.get("DE2") == (2.10, 1), str(parsed.get("DE2")))
+from dailybrief.collectors.market_data import _fmt_quote  # noqa: E402
+
+# Bundesbank SDMX-JSON: positional observations + dates dimension; null skipped
+bb = cy._parse_bundesbank_json({"data": {
+    "dataSets": [{"series": {"0:0:0": {"observations": {"0": [2.99], "1": [None], "2": [3.02]}}}}],
+    "structure": {"dimensions": {"observation": [
+        {"id": "TIME_PERIOD", "values": [{"id": "2026-06-18"}, {"id": "2026-06-19"},
+                                         {"id": "2026-06-22"}]}]}}}})
+d, v, prev = cy._last_two(bb)
+check("Bundesbank JSON parsed (skips null)", bb == [("2026-06-18", 2.99), ("2026-06-22", 3.02)], str(bb))
+check("Bundesbank latest + change_bp", (d, v, cy._change_bp(v, prev)) == ("2026-06-22", 3.02, 3),
+      f"{d} {v} {cy._change_bp(v, prev)}")
+
+ecb = cy._parse_ecb_csv("KEY,TIME_PERIOD,OBS_VALUE\nA,2026-06-18,2.99\nA,2026-06-19,3.04\n")
+check("ECB csvdata parsed", ecb == [("2026-06-18", 2.99), ("2026-06-19", 3.04)], str(ecb))
+
+cnb = cy._parse_cnb_csv("indicator_id;snapshot_id;period;value\n"
+                        "X;;20260619;4,75\nX;;20260620;4.78\n")  # tolerate comma or dot
+check("CNB ARAD csv parsed (YYYYMMDD + decimal)", cnb == [("2026-06-19", 4.75), ("2026-06-20", 4.78)],
+      str(cnb))
+
+fred = cy._parse_fred_csv("observation_date,IRLTLT01PLM156N\n2026-03-01,5.80\n2026-04-01,.\n2026-05-01,5.74\n")
+check("FRED monthly csv parsed (skips '.')", fred[-1] == ("2026-05-01", 5.74), str(fred))
+
+print("== PL snapshot parse (hardened) ==")
+check("PL dated line", cy._parse_pl_line("PL=5.74,+3,2026-06-19") == (5.74, 3, "2026-06-19"))
+check("PL change-only line", cy._parse_pl_line("PL=5.74,-2") == (5.74, -2, None))
+check("PL level-only line", cy._parse_pl_line("PL=5.74") == (5.74, None, None))
+check("PL=na -> rejected", cy._parse_pl_line("PL=na") is None)
+
+print("== validation guards ==")
+check("within bounds", cy._within(5.74, -2.0, 25.0) and not cy._within(None, -2, 25)
+      and not cy._within(40.0, -2, 25))
+check("near anchor band", cy._near_anchor(5.74, 5.70, 1.5) and not cy._near_anchor(8.0, 5.70, 1.5)
+      and cy._near_anchor(5.74, None, 1.5))
+check("recent date check", cy._recent("2026-06-16", wtue) and not cy._recent("2026-05-01", wtue)
+      and not cy._recent(None, wtue))
+
+print("== freshness labelling (never stale-as-fresh) ==")
+mq = cy._mk_quote("PL 10Y", 5.74, None, "2026-05-31", "fred/oecd (monthly)", "cee", "monthly")
+dq = cy._mk_quote("DE 10Y (Bund)", 3.02, 3, "2026-06-22", "bundesbank", "cores", "daily")
+check("monthly quote flagged 'dane miesięczne'", "dane miesięczne" in _fmt_quote(mq), _fmt_quote(mq))
+check("daily quote not flagged", "dane miesięczne" not in _fmt_quote(dq)
+      and "3.020%" in _fmt_quote(dq), _fmt_quote(dq))
+check("quote schema matches market_data (cat/freshness/is_yield)",
+      mq["cat"] == "cee" and dq["cat"] == "cores" and mq["is_yield"] and dq["ok"])
 
 print("== cover art ==")
 from dailybrief import cover as coverm  # noqa: E402

@@ -13,9 +13,13 @@ dni obejmuje **ostatnie 24 godziny**.
 collect → aggregate → generate script (Opus 4.8) → text-to-speech → publish (RSS)
 ```
 
-1. **Dane rynkowe** (darmowe): FRED (US: 2/5/10/30Y, 2s10s, SOFR, fed funds,
-   breakevens, HY OAS), Stooq (rentowności CEE + Bund: PL/CZ/HU/DE, WIG20),
-   Yahoo/yfinance (indeksy, FX, surowce, VIX), CoinGecko + Fear&Greed (krypto).
+1. **Dane rynkowe** (darmowe, deterministyczne i *datowane*): FRED (US: 2/5/10/30Y,
+   2s10s, SOFR, fed funds, breakevens, HY OAS), **Bundesbank** (Bund 10Y + Schatz 2Y;
+   fallback **ECB**), **CNB ARAD** (czeskie 10Y — darmowy klucz), Yahoo/yfinance
+   (indeksy, FX, surowce, VIX, WIG/WIG20), CoinGecko + Fear&Greed (krypto). PL 10Y:
+   walidowany snapshot dzienny; HU 10Y: FRED/OECD miesięcznie. Każda rentowność
+   CEE/Bund ma miesięczny anchor FRED/OECD jako fallback i kontrolę wiarygodności —
+   nieświeże liczby są jawnie oznaczane „dane miesięczne", nigdy nie udają dzisiejszych.
 2. **Kalendarz na dziś** (forward-looking): FairEconomy/ForexFactory (majors z
    godzinami, impactem, prognozą/poprzednią) + suplement CEE przez Perplexity
    (NBP/CNB/MNB + dzisiejsi mówcy Fed/ECB) — bo feed majors nie ma PL/CZ/HU.
@@ -38,9 +42,9 @@ Struktura odcinka i wszystkie parametry: [config.yaml](config.yaml).
 - **Python 3.11+** (masz 3.11.9 ✅)
 - Klucze API: `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`
 - Darmowy `FRED_API_KEY` — rejestracja 1 min: https://fredaccount.stlouisfed.org/apikeys
-- `STOOQ_API_KEY` — wymagany od 2026 do pobierania CSV (rentowności CEE/Bund).
-  Pobierz: otwórz `https://stooq.com/q/d/?s=10ply.b&get_apikey`, przepisz captchę,
-  skopiuj wartość `apikey=...` z wygenerowanego linku.
+- *(opcjonalny)* `CNB_API_KEY` — darmowy klucz CNB ARAD odblokowujący **dzienne**
+  czeskie 10Y. Rejestracja ~1 min: https://www.cnb.cz/arad/ (klucz w panelu konta).
+  Bez niego CZ spada do wartości miesięcznej FRED/OECD.
 - Konto **Cloudflare** (darmowy R2) do hostingu MP3 + RSS
 - *(zalecane)* `ffmpeg` do czystego łączenia audio: `winget install Gyan.FFmpeg`
   (bez ffmpeg działa fallback — binarne łączenie MP3, też grywalne)
@@ -107,7 +111,7 @@ Workflow: [.github/workflows/daily-brief.yml](.github/workflows/daily-brief.yml)
    (`.env`, `output/`, MP3 są w `.gitignore` — nie trafią do repo.)
 2. Repo → **Settings → Secrets and variables → Actions → New repository secret** —
    dodaj każdy osobno: `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`,
-   `FRED_API_KEY`, `STOOQ_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+   `FRED_API_KEY`, `CNB_API_KEY` (opcjonalny), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
    `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
 3. Repo → **Actions** → *Daily Brief* → **Run workflow** (ręczny test). Przy błędzie
    pobierz artefakt `brief-debug-*` (log + skrypt + research).
@@ -155,7 +159,7 @@ Ustaw auto-pobieranie nowych odcinków rano — telefon ściągnie brief sam.
 | Claude Opus 4.8 (skrypt ~40 min) | ~$1–2 |
 | Perplexity Sonar Pro (8 zapytań) | ~$0.05–0.20 |
 | xAI Grok (5 grup x_search + priority + web ≈ 8 wywołań) | ~$0.25–0.70 |
-| edge-tts, FRED, Stooq, Yahoo, CoinGecko | **darmowe** |
+| edge-tts, FRED, Bundesbank, ECB, CNB, Yahoo, CoinGecko | **darmowe** |
 | Cloudflare R2 (10 GB free) | **darmowe** |
 
 Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
@@ -184,8 +188,10 @@ Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
 ## Troubleshooting
 
 - **„Missing/placeholder env var …"** — uzupełnij `.env`.
-- **Brak rentowności CEE** — sprawdź symbole Stooq w `config.yaml`
-  (`10ply.b`, `10czy.b`, `10huy.b`, `10dey.b`); pojedynczy błąd jest logowany i pomijany.
+- **Brak/nieaktualne rentowności CEE** — DE leci z Bundesbanku (fallback ECB), CZ
+  wymaga `CNB_API_KEY`, PL to walidowany snapshot; przy każdym braku schodzimy do
+  miesięcznego anchora FRED/OECD (jawnie „dane miesięczne"). Strojenie: blok
+  `cee_yields` w `config.yaml` (serie, anchory, progi sanity).
 - **Audio „skacze" na złączeniach** — zainstaluj ffmpeg (czyste łączenie).
 - **edge-tts błąd / throttling** — uruchamiasz za często; bieg dzienny jest OK.
 - **Zadanie nie odpala przy uśpionym PC** — w zadaniu jest `-WakeToRun`, ale

@@ -388,7 +388,41 @@ calendar:
   # gap (NBP/CNB/MNB decisions + local releases) plus today's Fed/ECB speakers.
   cee_supplement: true
 
-# Market data universe. source: fred | stooq | yahoo | coingecko
+# Bund/Schatz + CEE (PL/CZ/HU) 10Y yields — handled by the dedicated cee_yields
+# collector, folded into rates_cores (DE) / rates_cee (PL/CZ/HU) in aggregate.py.
+# Philosophy: deterministic, DATED values; a monthly FRED/OECD figure is used as a
+# fallback AND a plausibility check, and is clearly flagged "dane miesięczne" — we
+# never present a stale number as today's print.
+#   DE 10Y/2Y : Deutsche Bundesbank REST API (daily, no key) -> ECB (daily proxy) -> FRED monthly
+#   CZ 10Y    : CNB ARAD REST API (daily) — needs free CNB_API_KEY in .env         -> FRED monthly
+#   PL 10Y    : hardened Perplexity snapshot (daily; requires an explicit close date
+#               and must sit within a band around the monthly anchor)              -> FRED monthly
+#   HU 10Y    : FRED/OECD monthly (robust, keyless). HU has no free *daily* source
+#               (ÁKK is JS-locked; MNB is monthly too) — set mnb_xls_url to use MNB.
+cee_yields:
+  bundesbank:                  # the actual German term-structure par yields
+    base: "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
+    series_10y: "D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A"
+    series_2y:  "D.I.ZAR.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A"
+  ecb_fallback:                # euro-area AAA spot rate — proxy for Bund (a few bp off)
+    series_10y: "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y"
+    series_2y:  "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y"
+  cnb_indicator_10y: "MIRFMSD10DRATPECD"   # ARAD daily 10Y Czech govbond yield
+  mnb_xls_url: ""              # optional HU override, e.g.
+                               # https://statisztika.mnb.hu/timeseries/en0904_benchmark.xls
+  mnb_header_row: 3            # MNB sheet: header row index; 10Y is column 7
+  mnb_col_10y: 7
+  fred_monthly:                # deterministic monthly anchors (keyless fredgraph.csv)
+    PL: "IRLTLT01PLM156N"
+    CZ: "IRLTLT01CZM156N"
+    HU: "IRLTLT01HUM156N"
+    DE: "IRLTLT01DEM156N"
+  sanity:                      # plausibility guards (percent / pp)
+    min: -2.0
+    max: 25.0
+    snapshot_max_dev_pp: 1.5   # reject a PL snapshot deviating >1.5pp from the anchor
+
+# Market data universe. source: fred | yahoo | coingecko
 # Symbols are resilient — a failing symbol is logged and skipped, not fatal.
 markets:
   rates_cores:
@@ -403,9 +437,9 @@ markets:
     - {name: "US 5y breakeven", source: fred, id: "T5YIE", unit: "%"}
     - {name: "US HY OAS", source: fred, id: "BAMLH0A0HYM2", unit: "%"}
     # Bund 10Y + Schatz 2Y are appended here by the cee_yields collector
-    # (TradingEconomics scrape + Perplexity fallback) — see aggregate.py.
-  # CEE 10Y yields (PL/CZ/HU) now come from the dedicated cee_yields collector
-  # (TradingEconomics scrape + Perplexity fallback), folded into rates_cee in
+    # (Bundesbank -> ECB -> FRED monthly) — see the cee_yields block above.
+  # CEE 10Y yields (PL/CZ/HU) come from the dedicated cee_yields collector
+  # (CNB/snapshot/MNB + FRED monthly anchors), folded into rates_cee in
   # aggregate.py — so this list is intentionally empty.
   rates_cee: []
   fx:

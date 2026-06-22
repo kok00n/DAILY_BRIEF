@@ -1,20 +1,36 @@
-"""Government bond yields not covered by FRED — CEE (PL/CZ/HU) and the German
-core (Bund 10Y, Schatz 2Y).
+"""Government bond yields not covered by FRED's daily US series — the German
+core (Bund 10Y, Schatz 2Y) and CEE (PL/CZ/HU 10Y).
 
-There is no free, keyless, daily, exact API for these, so this uses a hybrid:
-a best-effort scrape of TradingEconomics first (works from a residential IP /
-local run) with a Perplexity live snapshot as the fallback (works from cloud /
-datacenter IPs, reads the same published numbers, with citations).
+Design goal: deterministic, *dated* values, and NEVER present a stale number as
+today's. Per instrument we use the best free source reachable from a datacenter
+IP, with a deterministic monthly anchor (FRED/OECD, keyless) acting as both a
+fallback and a plausibility check:
 
-Note: scraping TradingEconomics is against their ToS and is reliably blocked by
-Cloudflare from datacenter IPs — so in the GitHub Actions deployment the
-Perplexity fallback does the real work.
+  DE 10Y / 2Y : Deutsche Bundesbank REST API (daily, no key)
+                -> ECB euro-area AAA curve (daily, proxy) -> FRED monthly
+  CZ 10Y      : CNB ARAD REST API (daily, needs free CNB_API_KEY) -> FRED monthly
+  PL 10Y      : hardened Perplexity snapshot (daily, validated vs the anchor:
+                explicit close date + plausibility band) -> FRED monthly
+  HU 10Y      : FRED/OECD monthly (robust, keyless). HU has no free *daily*
+                source (ÁKK is JS-locked); MNB's file is monthly too, available
+                as an optional override via cee_yields.mnb_xls_url.
+
+Every quote carries its real as-of date and a `freshness` tag
+(daily | monthly | na). The monthly path is honest, not stale-disguised-as-fresh:
+the renderer flags it as "dane miesięczne".
+
+Why this replaced the old TradingEconomics scrape: TE is Cloudflare-blocked from
+datacenter IPs, and when it did parse, the meta-description regex often grabbed a
+prior/historical print — so the numbers were unreliable and frequently stale.
 """
 from __future__ import annotations
 
+import calendar as _cal
+import csv
+import io
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any
 
 import requests
@@ -24,142 +40,425 @@ from ..util import LookbackWindow
 
 log = logging.getLogger("dailybrief.cee")
 
-HTTP_TIMEOUT = 20
+HTTP_TIMEOUT = 25
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
 }
 
-# key -> instrument. cat: which rates table it belongs to. te: TradingEconomics
-# /government-bond-yield slug (10Y pages only); None = Perplexity-only. ppx: how
-# to describe it to Perplexity.
-INSTRUMENTS = [
-    {"key": "PL",   "name": "PL 10Y",         "cat": "cee",   "te": "poland",
-     "ppx": "Poland 10-year government bond yield"},
-    {"key": "CZ",   "name": "CZ 10Y",         "cat": "cee",   "te": "czech-republic",
-     "ppx": "Czechia 10-year government bond yield"},
-    {"key": "HU",   "name": "HU 10Y",         "cat": "cee",   "te": "hungary",
-     "ppx": "Hungary 10-year government bond yield"},
-    {"key": "DE10", "name": "DE 10Y (Bund)",  "cat": "cores", "te": "germany",
-     "ppx": "Germany 10-year Bund yield"},
-    {"key": "DE2",  "name": "DE 2Y (Schatz)", "cat": "cores", "te": None,
-     "ppx": "Germany 2-year Schatz yield"},
-]
+BUNDESBANK_BASE = "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
+# Bundesbank term-structure par yields (annual coupon) — only the maturity token
+# differs: R10XX (10Y) vs R02XX (2Y). JSON avoids the German decimal-comma CSV.
+BUNDESBANK_10Y = "D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A"
+BUNDESBANK_2Y = "D.I.ZAR.ZI.EUR.S1311.B.A604.R02XX.R.A.A._Z._Z.A"
+# ECB euro-area AAA spot rate (Svensson) — close proxy for Bund (within a few bp).
+ECB_10Y = "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_10Y"
+ECB_2Y = "B.U2.EUR.4F.G_N_A.SV_C_YM.SR_2Y"
+# CNB ARAD daily single-bond yield, 10Y Czech govbond.
+CNB_INDICATOR_10Y = "MIRFMSD10DRATPECD"
+# FRED/OECD harmonised long-term (10Y) rates — MONTHLY, keyless via fredgraph.csv.
+FRED_MONTHLY = {"PL": "IRLTLT01PLM156N", "CZ": "IRLTLT01CZM156N",
+                "HU": "IRLTLT01HUM156N", "DE": "IRLTLT01DEM156N"}
+
+# Plausibility bounds (percent) and max allowed deviation of the PL snapshot from
+# the monthly anchor (percentage points). Override under cee_yields.sanity.
+SANITY_MIN, SANITY_MAX, SNAPSHOT_MAX_DEV = -2.0, 25.0, 1.5
+
+_MONTHS = {m.lower(): i for i, m in enumerate(_cal.month_name) if m}
 
 
-def _quote(name: str, value: float | None, change_bp: int | None, asof: str | None,
-           source: str, cat: str) -> dict[str, Any]:
+# --------------------------------------------------------------------------- #
+# Quote schema (matches market_data so it folds into the rates tables) + helpers
+# --------------------------------------------------------------------------- #
+def _mk_quote(name: str, value: float | None, change_bp: int | None,
+              asof: str | None, source: str, cat: str, freshness: str) -> dict[str, Any]:
     return {
         "name": name, "value": value, "prev": None, "unit": "%",
         "change": None, "change_bp": change_bp, "pct_change": None,
         "asof": asof, "is_yield": True, "ok": value is not None,
-        "source": source, "cat": cat,
+        "source": source, "cat": cat, "freshness": freshness,
     }
 
 
-# --------------------------------------------------------------------------- #
-# Best-effort TradingEconomics scrape (usually blocked from datacenter IPs)
-# --------------------------------------------------------------------------- #
-def _scrape_te(slug: str) -> float:
-    url = f"https://tradingeconomics.com/{slug}/government-bond-yield"
-    r = requests.get(url, headers=BROWSER_HEADERS, timeout=HTTP_TIMEOUT)
-    r.raise_for_status()
-    html = r.text
-    if "cf-browser-verification" in html or "Just a moment" in html or len(html) < 2000:
-        raise ValueError("blocked / challenge page")
-    m = re.search(r"was\s+(\d+\.\d+)\s+percent", html, re.IGNORECASE) \
-        or re.search(r'name="description"[^>]*content="[^"]*?(\d+\.\d+)\s*percent',
-                     html, re.IGNORECASE)
-    if not m:
-        raise ValueError("yield not found in HTML")
-    return float(m.group(1))
+def _last_two(pairs: list[tuple[str, float]]) -> tuple[str | None, float | None, float | None]:
+    """pairs ascending by date -> (latest_date, latest_value, prev_value)."""
+    if not pairs:
+        return None, None, None
+    latest = pairs[-1]
+    prev = pairs[-2][1] if len(pairs) > 1 else None
+    return latest[0], latest[1], prev
+
+
+def _within(value: float | None, lo: float, hi: float) -> bool:
+    return value is not None and lo <= value <= hi
+
+
+def _near_anchor(value: float, anchor_val: float | None, max_dev: float) -> bool:
+    return anchor_val is None or abs(value - anchor_val) <= max_dev
+
+
+def _recent(date_iso: str | None, window: LookbackWindow, max_days: int = 6) -> bool:
+    if not date_iso:
+        return False
+    try:
+        d = datetime.fromisoformat(date_iso).date()
+    except ValueError:
+        return False
+    return 0 <= (window.now.date() - d).days <= max_days
+
+
+def _change_bp(latest: float | None, prev: float | None) -> int | None:
+    if latest is None or prev is None:
+        return None
+    return round((latest - prev) * 100)
 
 
 # --------------------------------------------------------------------------- #
-# Perplexity fallback — structured, parseable snapshot
+# Parsers (pure — unit-tested offline)
 # --------------------------------------------------------------------------- #
-def _parse_snapshot(text: str) -> dict[str, tuple[float, int | None]]:
-    out: dict[str, tuple[float, int | None]] = {}
-    for inst in INSTRUMENTS:
-        key = inst["key"]
-        m = re.search(rf"{key}\s*=\s*(\d+\.\d+)\s*,\s*([+-]?\d+)", text)
-        if m:
-            out[key] = (float(m.group(1)), int(m.group(2)))
-            continue
-        m2 = re.search(rf"{key}\s*=\s*(\d+\.\d+)", text)
-        if m2:
-            out[key] = (float(m2.group(1)), None)
+def _parse_bundesbank_json(obj: dict) -> list[tuple[str, float]]:
+    """SDMX-JSON: observations are positional, dates live in the observation
+    dimension's `values`. Missing observations (null) are skipped."""
+    root = obj.get("data", obj)
+    ds_list = root.get("dataSets") or []
+    if not ds_list:
+        return []
+    series_map = ds_list[0].get("series") or {}
+    dims = (root.get("structure", {}).get("dimensions", {}).get("observation") or [])
+    dates: list[str] = []
+    for d in dims:
+        if d.get("id") in ("TIME_PERIOD", "TIME"):
+            dates = [v.get("id") for v in d.get("values", [])]
+            break
+    if not dates and dims:
+        dates = [v.get("id") for v in dims[0].get("values", [])]
+    out: list[tuple[str, float]] = []
+    for sval in series_map.values():
+        for idx_str, arr in (sval.get("observations") or {}).items():
+            try:
+                i, val = int(idx_str), arr[0]
+            except (ValueError, IndexError, TypeError):
+                continue
+            if val is None or i >= len(dates):
+                continue
+            try:
+                out.append((dates[i], float(val)))
+            except (TypeError, ValueError):
+                continue
+        break  # single series requested
+    out.sort()
     return out
 
 
-def _perplexity_snapshot(cfg: Config) -> dict[str, tuple[float, int | None]]:
+def _parse_ecb_csv(text: str) -> list[tuple[str, float]]:
+    out: list[tuple[str, float]] = []
+    for row in csv.DictReader(io.StringIO(text)):
+        d, v = row.get("TIME_PERIOD"), row.get("OBS_VALUE")
+        if not d or v in (None, "", "NaN"):
+            continue
+        try:
+            out.append((d, float(v)))
+        except ValueError:
+            continue
+    out.sort()
+    return out
+
+
+def _parse_cnb_csv(text: str) -> list[tuple[str, float]]:
+    """ARAD /data: semicolon, header row, columns
+    indicator_id; snapshot_id; period(YYYYMMDD); value. Decimal may be comma."""
+    out: list[tuple[str, float]] = []
+    rows = list(csv.reader(io.StringIO(text), delimiter=";"))
+    for row in rows[1:]:
+        if len(row) < 4:
+            continue
+        period, value = row[2].strip(), row[3].strip().replace(",", ".")
+        if not re.fullmatch(r"\d{8}", period):
+            continue
+        try:
+            v = float(value)
+        except ValueError:
+            continue
+        out.append((f"{period[:4]}-{period[4:6]}-{period[6:8]}", v))
+    out.sort()
+    return out
+
+
+def _parse_fred_csv(text: str) -> list[tuple[str, float]]:
+    """fredgraph.csv: date,value with missing values written as '.'."""
+    out: list[tuple[str, float]] = []
+    rows = list(csv.reader(io.StringIO(text)))
+    for row in rows[1:]:
+        if len(row) < 2:
+            continue
+        d, v = row[0].strip(), row[1].strip()
+        if v in (".", "", "NaN") or not re.match(r"\d{4}-\d{2}-\d{2}$", d):
+            continue
+        try:
+            out.append((d, float(v)))
+        except ValueError:
+            continue
+    out.sort()
+    return out
+
+
+_PL_DATED = re.compile(r"PL\s*=\s*(\d+(?:\.\d+)?)\s*,\s*([+-]?\d+|na)\s*,\s*(\d{4}-\d{2}-\d{2})", re.I)
+_PL_CHG = re.compile(r"PL\s*=\s*(\d+(?:\.\d+)?)\s*,\s*([+-]?\d+|na)", re.I)
+_PL_LVL = re.compile(r"PL\s*=\s*(\d+(?:\.\d+)?)", re.I)
+
+
+def _parse_pl_line(text: str) -> tuple[float, int | None, str | None] | None:
+    """Strict-first parse of the PL snapshot line: value, daily bp, close date."""
+    m = _PL_DATED.search(text)
+    if m:
+        chg = None if m.group(2).lower() == "na" else int(m.group(2))
+        return float(m.group(1)), chg, m.group(3)
+    m = _PL_CHG.search(text)
+    if m:
+        chg = None if m.group(2).lower() == "na" else int(m.group(2))
+        return float(m.group(1)), chg, None
+    m = _PL_LVL.search(text)
+    if m:
+        return float(m.group(1)), None, None
+    return None
+
+
+def _parse_mnb_sheet(sheet, header_row: int, val_col: int) -> list[tuple[str, float]]:
+    """MNB benchmark .xls: column 0 is a text month ('February 1997' then 'March'…)
+    with the year implied — carry it forward. Returns month-end dated values."""
+    out: list[tuple[str, float]] = []
+    year: int | None = None
+    prev_m = 0
+    for ri in range(header_row + 1, sheet.nrows):
+        label = str(sheet.cell_value(ri, 0)).strip()
+        if not label or label.lower().startswith("source"):
+            continue
+        ym = re.search(r"(\d{4})", label)
+        mname = re.search(r"[A-Za-z]+", label)
+        if not mname:
+            continue
+        m = _MONTHS.get(mname.group(0).lower())
+        if m is None:
+            continue
+        if ym:
+            year = int(ym.group(1))
+        elif year is not None and m < prev_m:
+            year += 1
+        prev_m = m
+        if year is None:
+            continue
+        try:
+            v = float(sheet.cell_value(ri, val_col))
+        except (ValueError, TypeError):
+            continue
+        last = _cal.monthrange(year, m)[1]
+        out.append((f"{year:04d}-{m:02d}-{last:02d}", v))
+    out.sort()
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Network fetchers (best-effort; raise on failure, caller catches)
+# --------------------------------------------------------------------------- #
+def _get(url: str, params: dict | None = None, timeout: int = HTTP_TIMEOUT) -> requests.Response:
+    r = requests.get(url, params=params, headers=BROWSER_HEADERS, timeout=timeout)
+    r.raise_for_status()
+    return r
+
+
+def _bundesbank(series: str, base: str = BUNDESBANK_BASE, n: int = 15) -> list[tuple[str, float]]:
+    r = _get(f"{base.rstrip('/')}/{series}", {"lastNObservations": n, "format": "json"})
+    return _parse_bundesbank_json(r.json())
+
+
+def _ecb(series: str, n: int = 15) -> list[tuple[str, float]]:
+    r = _get(f"https://data-api.ecb.europa.eu/service/data/YC/{series}",
+             {"lastNObservations": n, "format": "csvdata"})
+    return _parse_ecb_csv(r.text)
+
+
+def _cnb(indicator: str, api_key: str, months_before: int = 2) -> list[tuple[str, float]]:
+    r = _get("https://www.cnb.cz/aradb/api/v1/data",
+             {"indicator_id_list": indicator, "months_before": months_before,
+              "decimal_separator": "point", "delimiter": "semicolon",
+              "period_sort": "asc", "lang": "en", "api_key": api_key})
+    r.encoding = "cp1250"
+    return _parse_cnb_csv(r.text)
+
+
+def _fred_monthly(series: str) -> list[tuple[str, float]]:
+    r = _get("https://fred.stlouisfed.org/graph/fredgraph.csv", {"id": series})
+    return _parse_fred_csv(r.text)
+
+
+def _mnb_xls(url: str, header_row: int, val_col: int) -> list[tuple[str, float]]:
+    content = _get(url).content
+    try:
+        import xlrd  # optional; only needed if mnb_xls_url is configured
+    except ImportError:
+        log.info("MNB .xls skipped: xlrd not installed (pip install xlrd)")
+        return []
+    book = xlrd.open_workbook(file_contents=content)
+    return _parse_mnb_sheet(book.sheet_by_index(0), header_row, val_col)
+
+
+def _pl_snapshot(cfg: Config) -> tuple[float, int | None, str | None] | None:
     api_key = cfg.env.get("PERPLEXITY_API_KEY", "")
     if not api_key or api_key.endswith("..."):
-        return {}
-    lines = "\n".join(f"{i['key']}=<yield>,<change_bp>   # {i['ppx']}" for i in INSTRUMENTS)
+        return None
     prompt = (
-        "Return ONLY the latest government bond yields and their daily change in basis "
-        "points, using the most recent market close. Output EXACTLY these lines, nothing "
-        f"else, no prose:\n{lines}\n"
-        "where <yield> is a percent number like 5.74 and <change_bp> is a signed integer "
-        "like +3 or -2. If a value is unknown write na. Do not add comments to your output."
+        "Return ONLY one line, no prose, no markdown:\n"
+        "PL=<yield>,<change_bp>,<YYYY-MM-DD>\n"
+        "where <yield> is the latest closing yield of the Poland 10-year government "
+        "bond (POLGB) in percent (e.g. 5.74), <change_bp> is the signed daily change "
+        "in basis points (e.g. +3 or -2), and <YYYY-MM-DD> is the exact trading date "
+        "of that close. Use the most recent market close. If you are not certain of "
+        "the exact close, write PL=na."
     )
     body = {
         "model": cfg.get("perplexity", "model", default="sonar-pro"),
         "messages": [
             {"role": "system", "content": "You are a precise bond-market data assistant. "
-             "Never invent numbers; if unsure, output na."},
+             "Never invent numbers or dates; if unsure, output na."},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 300,
-        "temperature": 0.1,
-        "search_recency_filter": "day",
+        "max_tokens": 120, "temperature": 0.1, "search_recency_filter": "day",
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
         r = requests.post("https://api.perplexity.ai/chat/completions",
                           json=body, headers=headers, timeout=60)
         r.raise_for_status()
-        return _parse_snapshot(r.json()["choices"][0]["message"]["content"])
+        return _parse_pl_line(r.json()["choices"][0]["message"]["content"])
     except Exception as e:  # noqa: BLE001
-        log.warning("CEE/Bund Perplexity snapshot failed: %s", e)
-        return {}
+        log.warning("PL snapshot failed: %s", e)
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Per-instrument resolution: best deterministic source -> monthly anchor
+# --------------------------------------------------------------------------- #
+def _anchor_quote(name: str, anchor: tuple[str, float] | None, cat: str,
+                  sources: list[str], tag: str) -> dict[str, Any]:
+    if anchor:
+        sources.append(f"{tag}:fred-monthly")
+        return _mk_quote(name, anchor[1], None, anchor[0], "fred/oecd (monthly)", cat, "monthly")
+    sources.append(f"{tag}:none")
+    return _mk_quote(name, None, None, None, "n/a", cat, "na")
+
+
+def _resolve_de(name: str, tag: str, bb_series: str | None, ecb_series: str | None,
+                base: str, anchor: tuple[str, float] | None, lo: float, hi: float,
+                sources: list[str]) -> dict[str, Any]:
+    if bb_series:
+        try:
+            d, v, prev = _last_two(_bundesbank(bb_series, base))
+            if _within(v, lo, hi):
+                sources.append(f"{tag}:bundesbank")
+                return _mk_quote(name, v, _change_bp(v, prev), d, "bundesbank", "cores", "daily")
+        except Exception as e:  # noqa: BLE001
+            log.info("%s Bundesbank failed (%s) — trying ECB", tag, type(e).__name__)
+    if ecb_series:
+        try:
+            d, v, prev = _last_two(_ecb(ecb_series))
+            if _within(v, lo, hi):
+                sources.append(f"{tag}:ecb")
+                return _mk_quote(name, v, _change_bp(v, prev), d, "ecb (euro AAA)", "cores", "daily")
+        except Exception as e:  # noqa: BLE001
+            log.info("%s ECB failed (%s) — falling back to monthly", tag, type(e).__name__)
+    return _anchor_quote(name, anchor, "cores", sources, tag)
+
+
+def _resolve_cz(name: str, cfg: Config, sc: dict, anchor: tuple[str, float] | None,
+                lo: float, hi: float, sources: list[str]) -> dict[str, Any]:
+    key = cfg.env.get("CNB_API_KEY", "")
+    indicator = sc.get("cnb_indicator_10y") or CNB_INDICATOR_10Y
+    if key and not key.endswith("...") and indicator:
+        try:
+            d, v, prev = _last_two(_cnb(indicator, key))
+            if _within(v, lo, hi):
+                sources.append("CZ:cnb")
+                return _mk_quote(name, v, _change_bp(v, prev), d, "cnb arad", "cee", "daily")
+            log.info("CZ CNB returned no usable value — falling back to monthly")
+        except Exception as e:  # noqa: BLE001
+            log.info("CZ CNB failed (%s) — falling back to monthly", type(e).__name__)
+    else:
+        log.info("CZ: no CNB_API_KEY — using monthly anchor")
+    return _anchor_quote(name, anchor, "cee", sources, "CZ")
+
+
+def _resolve_hu(name: str, sc: dict, anchor: tuple[str, float] | None,
+                lo: float, hi: float, sources: list[str]) -> dict[str, Any]:
+    url = (sc.get("mnb_xls_url") or "").strip()
+    if url:
+        try:
+            d, v, _ = _last_two(_mnb_xls(url, int(sc.get("mnb_header_row", 3)),
+                                         int(sc.get("mnb_col_10y", 7))))
+            if _within(v, lo, hi):
+                sources.append("HU:mnb")
+                return _mk_quote(name, v, None, d, "mnb/ákk (monthly)", "cee", "monthly")
+        except Exception as e:  # noqa: BLE001
+            log.info("HU MNB .xls failed (%s) — falling back to FRED monthly", type(e).__name__)
+    return _anchor_quote(name, anchor, "cee", sources, "HU")
+
+
+def _resolve_pl(name: str, cfg: Config, anchor: tuple[str, float] | None,
+                lo: float, hi: float, max_dev: float, window: LookbackWindow,
+                sources: list[str]) -> dict[str, Any]:
+    snap = _pl_snapshot(cfg)
+    if snap:
+        v, chg, d = snap
+        anchor_val = anchor[1] if anchor else None
+        if _within(v, lo, hi) and _near_anchor(v, anchor_val, max_dev) and _recent(d, window):
+            sources.append("PL:snapshot")
+            return _mk_quote(name, v, chg, d, "perplexity (validated)", "cee", "daily")
+        log.info("PL snapshot rejected (v=%s date=%s anchor=%s) — using monthly", v, d, anchor_val)
+    return _anchor_quote(name, anchor, "cee", sources, "PL")
 
 
 # --------------------------------------------------------------------------- #
 # Orchestration
 # --------------------------------------------------------------------------- #
 def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
-    asof = window.now.date().isoformat()
-    scraped: dict[str, float] = {}
+    sc = cfg.get("cee_yields", default={}) or {}
+    bb = sc.get("bundesbank", {}) or {}
+    base = bb.get("base", BUNDESBANK_BASE)
+    bb_10y = bb.get("series_10y", BUNDESBANK_10Y)
+    bb_2y = bb.get("series_2y", BUNDESBANK_2Y)
+    ecb = sc.get("ecb_fallback", {}) or {}
+    ecb_10y = ecb.get("series_10y", ECB_10Y)
+    ecb_2y = ecb.get("series_2y", ECB_2Y)
+    fred_map = sc.get("fred_monthly", {}) or FRED_MONTHLY
+    sanity = sc.get("sanity", {}) or {}
+    lo = float(sanity.get("min", SANITY_MIN))
+    hi = float(sanity.get("max", SANITY_MAX))
+    max_dev = float(sanity.get("snapshot_max_dev_pp", SNAPSHOT_MAX_DEV))
 
-    scrapeable = [i for i in INSTRUMENTS if i["te"]]
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        futs = {ex.submit(_scrape_te, i["te"]): i["key"] for i in scrapeable}
-        for fut in as_completed(futs):
-            key = futs[fut]
-            try:
-                scraped[key] = fut.result()
-            except Exception as e:  # noqa: BLE001
-                log.info("scrape %s failed (%s) — will use Perplexity", key, type(e).__name__)
+    # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
+    anchors: dict[str, tuple[str, float]] = {}
+    for k, sid in fred_map.items():
+        try:
+            pairs = _fred_monthly(sid)
+            if pairs:
+                anchors[k] = (pairs[-1][0], pairs[-1][1])
+        except Exception as e:  # noqa: BLE001
+            log.info("FRED anchor %s (%s) failed: %s", k, sid, type(e).__name__)
 
-    snap = _perplexity_snapshot(cfg)  # fills gaps + supplies daily bp changes
-
-    quotes: list[dict] = []
-    for inst in INSTRUMENTS:
-        key, name, cat = inst["key"], inst["name"], inst["cat"]
-        if key in scraped:
-            quotes.append(_quote(name, scraped[key], snap.get(key, (None, None))[1],
-                                 asof, "tradingeconomics", cat))
-        elif key in snap:
-            val, chg = snap[key]
-            quotes.append(_quote(name, val, chg, asof, "perplexity", cat))
-        else:
-            quotes.append(_quote(name, None, None, None, "n/a", cat))
+    sources: list[str] = []
+    quotes = [
+        _resolve_de("DE 10Y (Bund)", "DE10", bb_10y, ecb_10y, base,
+                    anchors.get("DE"), lo, hi, sources),
+        _resolve_de("DE 2Y (Schatz)", "DE2", bb_2y, ecb_2y, base,
+                    None, lo, hi, sources),   # no 2Y monthly anchor exists
+        _resolve_pl("PL 10Y", cfg, anchors.get("PL"), lo, hi, max_dev, window, sources),
+        _resolve_cz("CZ 10Y", cfg, sc, anchors.get("CZ"), lo, hi, sources),
+        _resolve_hu("HU 10Y", sc, anchors.get("HU"), lo, hi, sources),
+    ]
 
     ok = sum(1 for q in quotes if q["ok"])
-    via = "scrape+perplexity" if scraped else ("perplexity" if snap else "none")
-    log.info("CEE/Bund yields: %d/%d ok (via %s)", ok, len(INSTRUMENTS), via)
-    return {"quotes": quotes, "via": via}
+    daily = sum(1 for q in quotes if q.get("freshness") == "daily")
+    log.info("CEE/Bund yields: %d/%d ok (%d daily) — %s",
+             ok, len(quotes), daily, ", ".join(sources))
+    return {"quotes": quotes, "via": ", ".join(sources)}

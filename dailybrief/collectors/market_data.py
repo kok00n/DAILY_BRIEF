@@ -283,10 +283,12 @@ def _fmt_quote(q: dict) -> str:
     if not q.get("ok"):
         return f"  - {q['name']}: brak danych"
     val, unit = q["value"], q["unit"]
+    # honest freshness flag: a monthly anchor must never read as today's print
+    fresh = " — dane miesięczne" if q.get("freshness") == "monthly" else ""
     if q["is_yield"]:
         bp = q.get("change_bp")
         chg = f"{'+' if (bp or 0) >= 0 else ''}{bp} bp" if bp is not None else "—"
-        return f"  - {q['name']}: {val:.3f}% (zmiana {chg}) [stan {q['asof']}]"
+        return f"  - {q['name']}: {val:.3f}% (zmiana {chg}) [stan {q['asof']}]{fresh}"
     pct = q.get("pct_change")
     chg = f"{'+' if (pct or 0) >= 0 else ''}{pct}%" if pct is not None else "—"
     asof = f" [stan {q['asof']}]" if q.get("asof") else ""
