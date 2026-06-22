@@ -290,7 +290,8 @@ markets:
     - {name: "Nasdaq 100",source: yahoo, id: "^NDX"}
     - {name: "Dow",       source: yahoo, id: "^DJI"}
     - {name: "DAX",       source: yahoo, id: "^GDAXI"}
-    - {name: "WIG20",     source: stooq, id: "wig20"}
+    - {name: "WIG20",     source: yahoo, id: "WIG20.WA"}
+    - {name: "WIG",       source: yahoo, id: "WIG.WA"}
     - {name: "VIX",       source: yahoo, id: "^VIX"}
     - {name: "S&P futures",source: yahoo, id: "ES=F"}
   commodities:
