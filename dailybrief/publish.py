@@ -20,6 +20,7 @@ log = logging.getLogger("dailybrief.publish")
 
 EPISODES_FILE = DATA_DIR / "episodes.json"
 EPISODES_KEY = "episodes.json"   # feed-state object in R2 (source of truth in cloud)
+COVER_KEY = "cover.png"          # generated-cover object key in R2
 
 
 def _hhmmss(seconds: float | None) -> str:
@@ -92,13 +93,15 @@ def _r2_delete(client, bucket: str, key: str) -> None:
 # --------------------------------------------------------------------------- #
 # Feed
 # --------------------------------------------------------------------------- #
-def _build_feed(cfg: Config, episodes: list[dict], public_base: str) -> bytes:
+def _build_feed(cfg: Config, episodes: list[dict], public_base: str,
+                cover_url: str | None = None) -> bytes:
     pub = cfg.get("publish", default={})
     feed_url = f"{public_base}/{pub.get('feed_filename', 'feed.xml')}"
+    title = pub.get("podcast_title", "Poranny Brief")
 
     fg = FeedGenerator()
     fg.load_extension("podcast")
-    fg.title(pub.get("podcast_title", "Poranny Brief"))
+    fg.title(title)
     fg.link(href=feed_url, rel="self")
     fg.link(href=public_base, rel="alternate")
     fg.description(pub.get("podcast_description", "Codzienny brief makro."))
@@ -108,9 +111,11 @@ def _build_feed(cfg: Config, episodes: list[dict], public_base: str) -> bytes:
     fg.podcast.itunes_author(pub.get("podcast_author", "DAILY_BRIEF"))
     fg.podcast.itunes_category("News", "Business News")
     fg.podcast.itunes_explicit("no")
-    if pub.get("cover_image_url"):
-        fg.image(url=pub["cover_image_url"])
-        fg.podcast.itunes_image(pub["cover_image_url"])
+    fg.podcast.itunes_owner(name=pub.get("podcast_author", "DAILY_BRIEF"),
+                            email=pub.get("podcast_email", ""))
+    if cover_url:  # required by Spotify/Apple
+        fg.image(url=cover_url, title=title, link=public_base)
+        fg.podcast.itunes_image(cover_url)
 
     # newest last in list; feedgen prepends so add oldest->newest
     for ep in sorted(episodes, key=lambda e: e["pubdate"]):
@@ -121,7 +126,33 @@ def _build_feed(cfg: Config, episodes: list[dict], public_base: str) -> bytes:
         fe.enclosure(ep["url"], str(ep.get("size_bytes", 0)), "audio/mpeg")
         fe.published(datetime.fromisoformat(ep["pubdate"]))
         fe.podcast.itunes_duration(_hhmmss(ep.get("duration_s")))
+        if cover_url:
+            fe.podcast.itunes_image(cover_url)
     return fg.rss_str(pretty=True)
+
+
+def _ensure_cover(cfg: Config, client, bucket: str, public_base: str,
+                  use_r2: bool) -> str | None:
+    """Use the configured cover image URL if set; otherwise generate a default
+    cover with Pillow and upload it to R2."""
+    pub = cfg.get("publish", default={})
+    if pub.get("cover_image_url"):
+        return pub["cover_image_url"]
+    if not pub.get("cover_generate", True):
+        return None
+    try:
+        from . import cover as cover_mod
+        png = cover_mod.generate_cover(pub.get("podcast_title", "Poranny Brief"),
+                                       pub.get("podcast_subtitle", ""))
+    except Exception as e:  # noqa: BLE001
+        log.warning("cover generation failed (%s); feed will have no artwork", e)
+        return None
+    local = OUTPUT_DIR / COVER_KEY
+    local.write_bytes(png)
+    if use_r2:
+        _r2_put(client, bucket, COVER_KEY, png, "image/png")
+        return f"{public_base}/{COVER_KEY}"
+    return local.resolve().as_uri()
 
 
 # --------------------------------------------------------------------------- #
@@ -182,7 +213,8 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
             _r2_delete(client, bucket, old["mp3_key"].rsplit(".", 1)[0] + ".txt")
         log.info("pruned old episode %s", old["date"])
 
-    feed_bytes = _build_feed(cfg, episodes, public_base or OUTPUT_DIR.as_uri())
+    cover_url = _ensure_cover(cfg, client, bucket, public_base, use_r2)
+    feed_bytes = _build_feed(cfg, episodes, public_base or OUTPUT_DIR.as_uri(), cover_url)
     feed_local = OUTPUT_DIR / feed_name
     feed_local.write_bytes(feed_bytes)
 

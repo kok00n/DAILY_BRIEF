@@ -311,6 +311,12 @@ publish:
   podcast_author: "DAILY_BRIEF"
   podcast_description: "Codzienny 40-minutowy brief makro: stopy, obligacje (cores + CEE), FX, akcje, surowce, krypto, FinTwit, AI oraz trade ideas."
   podcast_language: "pl"
-  podcast_email: "kamilkonat@gmail.com"
+  podcast_email: "kamilkonat@gmail.com"   # used by Spotify/Apple to verify ownership
+  podcast_subtitle: "Makro & Rates"
+  # Cover art (required by Spotify/Apple: square >=1400px). Point this at your own
+  # hosted image (e.g. your Gemini cover uploaded to R2). If empty, a clean default
+  # cover is generated and uploaded automatically.
+  cover_image_url: ""
+  cover_generate: true
   keep_episodes: 30           # prune older MP3s from R2 beyond this many
   feed_filename: "feed.xml"

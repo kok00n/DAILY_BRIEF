@@ -220,5 +220,14 @@ check("CEE parse HU (level only)", parsed.get("HU") == (6.85, None), str(parsed.
 check("Bund DE10 parsed", parsed.get("DE10") == (2.55, -2), str(parsed.get("DE10")))
 check("Schatz DE2 parsed (no DE10 collision)", parsed.get("DE2") == (2.10, 1), str(parsed.get("DE2")))
 
+print("== cover art ==")
+from dailybrief import cover as coverm  # noqa: E402
+png = coverm.generate_cover("Poranny Brief", "Makro & Rates")
+check("cover is a PNG >= 1KB", png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 1000, str(len(png)))
+xml_cov = publish._build_feed(cfg, fake_eps, "https://pub-xxxx.r2.dev",
+                              "https://pub-xxxx.r2.dev/cover.png").decode("utf-8")
+check("feed carries itunes:image when cover set",
+      "itunes:image" in xml_cov and "cover.png" in xml_cov)
+
 print(f"\n== RESULT: {PASS} passed, {FAIL} failed ==")
 sys.exit(1 if FAIL else 0)
