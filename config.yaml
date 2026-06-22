@@ -313,10 +313,12 @@ publish:
   podcast_language: "pl"
   podcast_email: "kamilkonat@gmail.com"   # used by Spotify/Apple to verify ownership
   podcast_subtitle: "Makro & Rates"
-  # Cover art (required by Spotify/Apple: square >=1400px). Point this at your own
-  # hosted image (e.g. your Gemini cover uploaded to R2). If empty, a clean default
-  # cover is generated and uploaded automatically.
+  # Cover art (required by Spotify/Apple: square >=1400px). Resolution order:
+  #   1. cover_image_url — a ready public URL, used as-is
+  #   2. cover_file      — an image committed in the repo; uploaded to R2 each run
+  #   3. cover_generate  — a clean default cover generated with Pillow
   cover_image_url: ""
+  cover_file: "assets/cover.jpg"
   cover_generate: true
   keep_episodes: 30           # prune older MP3s from R2 beyond this many
   feed_filename: "feed.xml"

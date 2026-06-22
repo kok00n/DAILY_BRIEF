@@ -14,7 +14,7 @@ from typing import Any
 from feedgen.feed import FeedGenerator
 
 from .config import Config
-from .util import DATA_DIR, OUTPUT_DIR
+from .util import DATA_DIR, OUTPUT_DIR, ROOT
 
 log = logging.getLogger("dailybrief.publish")
 
@@ -138,6 +138,22 @@ def _ensure_cover(cfg: Config, client, bucket: str, public_base: str,
     pub = cfg.get("publish", default={})
     if pub.get("cover_image_url"):
         return pub["cover_image_url"]
+    # a committed image file (e.g. assets/cover.jpg) takes precedence over the
+    # generated default — upload it to R2 and use that URL
+    cover_file = pub.get("cover_file")
+    if cover_file:
+        path = ROOT / cover_file
+        if path.exists():
+            ext = path.suffix.lower()
+            is_jpg = ext in (".jpg", ".jpeg")
+            key = "cover.jpg" if is_jpg else "cover.png"
+            ctype = "image/jpeg" if is_jpg else "image/png"
+            if use_r2:
+                _r2_put(client, bucket, key, path.read_bytes(), ctype)
+                log.info("cover uploaded from %s -> %s", cover_file, key)
+                return f"{public_base}/{key}"
+            return path.resolve().as_uri()
+        log.warning("cover_file '%s' not found; falling back to generated cover", cover_file)
     if not pub.get("cover_generate", True):
         return None
     try:
