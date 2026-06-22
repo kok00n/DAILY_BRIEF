@@ -14,7 +14,7 @@ general:
 claude:
   model: "claude-opus-4-8"
   max_tokens: 32000          # ceiling only — you pay for tokens actually generated
-  temperature: 0.4
+  # note: Opus 4.8 does not accept a 'temperature' param, so we don't send one.
 
 perplexity:
   model: "sonar-pro"

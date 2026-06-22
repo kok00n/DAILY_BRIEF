@@ -130,8 +130,7 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> 
     client = _client(cfg)
     targets = _section_targets(cfg)
     model = cfg.get("claude", "model", default="claude-opus-4-8")
-    max_tokens = int(cfg.get("claude", "max_tokens", default=22000))
-    temperature = float(cfg.get("claude", "temperature", default=0.4))
+    max_tokens = int(cfg.get("claude", "max_tokens", default=32000))
 
     log.info("generating script with %s (target ~%d words)...",
              model, round(cfg.target_minutes * cfg.wpm))
@@ -139,7 +138,6 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> 
         client,
         model=model,
         max_tokens=max_tokens,
-        temperature=temperature,
         system=_system_blocks(cfg, targets),
         messages=[{"role": "user", "content": _user_message(window, research_text)}],
     )
@@ -150,12 +148,12 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> 
     target_total = round(cfg.target_minutes * cfg.wpm)
     if script.total_words < 0.85 * target_total:
         script = _expand(client, cfg, window, research_text, script, targets, model,
-                         max_tokens, temperature)
+                         max_tokens)
     return script
 
 
 def _expand(client, cfg, window, research_text, script, targets, model,
-            max_tokens, temperature) -> BriefScript:
+            max_tokens) -> BriefScript:
     by_id = {t["id"]: t for t in targets}
     short = [s for s in script.sections
              if s["id"] in by_id and s["words"] < 0.8 * by_id[s["id"]]["target_words"]]
@@ -182,7 +180,7 @@ def _expand(client, cfg, window, research_text, script, targets, model,
         f"{research_text}"
     )
     raw = _stream_text(
-        client, model=model, max_tokens=max_tokens, temperature=temperature,
+        client, model=model, max_tokens=max_tokens,
         system=_system_blocks(cfg, targets),
         messages=[{"role": "user", "content": instruction}],
     )

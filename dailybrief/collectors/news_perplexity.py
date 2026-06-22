@@ -148,8 +148,9 @@ def _query(topic: str, prompt: str, cfg: Config, window: LookbackWindow,
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
-    full = dict(base, search_recency_filter=_recency(cfg, topic, window),
-                search_after_date_filter=window.from_date_us)
+    # NB: Perplexity rejects search_recency_filter + search_after_date_filter together,
+    # so we use recency only (day / week-on-Mondays) plus the domain filter.
+    full = dict(base, search_recency_filter=_recency(cfg, topic, window))
     dom = _domain_filter(cfg, topic)
     if dom:
         full["search_domain_filter"] = dom
