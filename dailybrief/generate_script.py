@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -105,14 +106,31 @@ def _system_blocks(cfg: Config, targets: list[dict]) -> list[dict]:
     return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
 
-def _stream_text(client: anthropic.Anthropic, **kwargs) -> str:
+def _stream_text(client: anthropic.Anthropic, attempts: int = 5, **kwargs) -> str:
     """Stream the completion. Streaming is required for large max_tokens (the SDK
-    refuses non-streaming requests that could exceed 10 minutes)."""
-    parts: list[str] = []
-    with client.messages.stream(**kwargs) as stream:
-        for chunk in stream.text_stream:
-            parts.append(chunk)
-    return "".join(parts)
+    refuses non-streaming requests that could exceed 10 minutes). Retries transient
+    server errors (overloaded 529 / 429 / 5xx / connection) with backoff, since the
+    Anthropic API can be briefly overloaded."""
+    last: Exception | None = None
+    for i in range(1, attempts + 1):
+        try:
+            parts: list[str] = []
+            with client.messages.stream(**kwargs) as stream:
+                for chunk in stream.text_stream:
+                    parts.append(chunk)
+            return "".join(parts)
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
+            last = e
+            status = getattr(e, "status_code", None)
+            retryable = isinstance(e, anthropic.APIConnectionError) or \
+                status in (408, 409, 429, 529) or (status or 0) >= 500
+            if not retryable or i == attempts:
+                raise
+            wait = min(60, 5 * 2 ** (i - 1))   # 5, 10, 20, 40, 60s
+            log.warning("Claude stream attempt %d/%d failed (%s); retry in %ds",
+                        i, attempts, getattr(e, "message", str(e)), wait)
+            time.sleep(wait)
+    raise last  # type: ignore[misc]
 
 
 def _user_message(window: LookbackWindow, research_text: str) -> str:
