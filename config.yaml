@@ -410,7 +410,7 @@ markets:
 publish:
   podcast_title: "Briefing Rynkowy"
   podcast_author: "DAILY_BRIEF"
-  podcast_description: "Codzienny 40-minutowy brief makro: stopy, obligacje (cores + CEE), FX, akcje, surowce, krypto, FinTwit, AI oraz trade ideas."
+  podcast_description: "Twój poranny przegląd rynków w 40 minut — idealny na dojazd do pracy. Codziennie od poniedziałku do piątku zbieram najważniejsze z ostatnich 24 godzin: stopy procentowe i obligacje (US Treasuries, Bund i region CEE — Polska, Czechy, Węgry), dolar i złoty, akcje (USA, Europa, GPW), surowce, krypto, sentyment z FinTwita oraz nowinki ze świata AI. Na koniec konkretne trade ideas: teza, katalizator, poziomy, ryzyko. Szczególny nacisk na rynek stóp. Mniej szumu, więcej sygnału — wszystko, co warto wiedzieć przed sesją, w jednym odcinku. Materiał informacyjny, nie porada inwestycyjna."
   podcast_language: "pl"
   podcast_email: "kamilkonat@gmail.com"   # used by Spotify/Apple to verify ownership
   podcast_subtitle: "Makro & Rates"
