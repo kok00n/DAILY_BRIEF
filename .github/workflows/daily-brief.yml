@@ -46,8 +46,8 @@ jobs:
           R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
         run: python run_brief.py
 
-      - name: Upload debug logs on failure
-        if: failure()
+      - name: Upload script / research / logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: brief-debug-${{ github.run_id }}
@@ -55,5 +55,6 @@ jobs:
             output/*.log
             output/research_*.txt
             output/script_*.txt
+            output/dossier_*.json
           if-no-files-found: ignore
           retention-days: 7

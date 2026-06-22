@@ -142,11 +142,21 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
     episodes = _load_episodes(client if use_r2 else None, bucket)
     episodes = [e for e in episodes if e["date"] != date_str]  # replace same-day
 
+    txt_key = f"episodes/brief_{date_str}.txt"
+    transcript_url = None
     if client and public_base:
         log.info("uploading MP3 to R2 (%s)...", mp3_key)
         _r2_put(client, bucket, mp3_key, mp3_path.read_bytes(), "audio/mpeg")
         ep_url = f"{public_base}/{mp3_key}"
         mode = "r2"
+        # companion transcript (the Opus script) — handy for review / show notes
+        try:
+            _r2_put(client, bucket, txt_key,
+                    script.full_narration().encode("utf-8"), "text/plain; charset=utf-8")
+            transcript_url = f"{public_base}/{txt_key}"
+            log.info("transcript -> %s", transcript_url)
+        except Exception as e:  # noqa: BLE001
+            log.warning("transcript upload failed: %s", e)
     else:
         ep_url = mp3_path.resolve().as_uri()
         mode = "local"
@@ -163,12 +173,13 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
         "pubdate": datetime.now(timezone.utc).isoformat(),
     })
 
-    # prune
+    # prune (drop the MP3 and its companion transcript)
     episodes.sort(key=lambda e: e["pubdate"])
     while len(episodes) > keep:
         old = episodes.pop(0)
         if client and old.get("mp3_key"):
             _r2_delete(client, bucket, old["mp3_key"])
+            _r2_delete(client, bucket, old["mp3_key"].rsplit(".", 1)[0] + ".txt")
         log.info("pruned old episode %s", old["date"])
 
     feed_bytes = _build_feed(cfg, episodes, public_base or OUTPUT_DIR.as_uri())
@@ -185,4 +196,5 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
 
     _save_episodes(episodes, client if use_r2 else None, bucket)
     return {"mode": mode, "episode_url": ep_url, "feed_url": feed_url,
-            "feed_local": feed_local, "episodes": len(episodes)}
+            "transcript_url": transcript_url, "feed_local": feed_local,
+            "episodes": len(episodes)}

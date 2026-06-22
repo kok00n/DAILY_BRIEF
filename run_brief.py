@@ -98,6 +98,8 @@ def main() -> int:
         if result.get("feed_url"):
             log.info("RSS feed: %s", result["feed_url"])
             log.info("Episode : %s", result["episode_url"])
+        if result.get("transcript_url"):
+            log.info("Transcript: %s", result["transcript_url"])
         return 0
 
     except Exception as e:  # noqa: BLE001
