@@ -113,25 +113,31 @@ def _extract_sources(data: dict) -> list[str]:
 
 
 def _post(body: dict, headers: dict, attempts: int = 3) -> dict:
-    """POST with retry on transient errors (429 / 5xx / network). 4xx fails fast."""
+    """POST with retry on transient errors (429 / 5xx / network). 4xx fails fast
+    and includes the response body so the real reason is visible in the logs."""
     last: Exception | None = None
     for i in range(1, attempts + 1):
         try:
             r = requests.post(ENDPOINT, json=body, headers=headers, timeout=HTTP_TIMEOUT)
-            if r.status_code == 429 or r.status_code >= 500:
-                raise RuntimeError(f"retryable {r.status_code}: {r.text[:120]}")
-            r.raise_for_status()
-            return r.json()
-        except (requests.RequestException, RuntimeError) as e:
+        except requests.RequestException as e:
             last = e
             if i < attempts:
                 time.sleep(2 * i)
+            continue
+        if r.status_code == 429 or r.status_code >= 500:
+            last = RuntimeError(f"retryable {r.status_code}: {r.text[:200]}")
+            if i < attempts:
+                time.sleep(2 * i)
+            continue
+        if r.status_code >= 400:
+            raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")  # 4xx: fail fast
+        return r.json()
     raise last  # type: ignore[misc]
 
 
 def _query(topic: str, prompt: str, cfg: Config, window: LookbackWindow,
            api_key: str) -> dict[str, Any]:
-    body = {
+    base = {
         "model": cfg.get("perplexity", "model", default="sonar-pro"),
         "messages": [
             {"role": "system", "content": SYSTEM},
@@ -139,14 +145,23 @@ def _query(topic: str, prompt: str, cfg: Config, window: LookbackWindow,
         ],
         "max_tokens": cfg.get("perplexity", "max_tokens_per_query", default=1100),
         "temperature": 0.2,
-        "search_recency_filter": _recency(cfg, topic, window),
-        "search_after_date_filter": window.from_date_us,
     }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    full = dict(base, search_recency_filter=_recency(cfg, topic, window),
+                search_after_date_filter=window.from_date_us)
     dom = _domain_filter(cfg, topic)
     if dom:
-        body["search_domain_filter"] = dom
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    data = _post(body, headers)
+        full["search_domain_filter"] = dom
+    try:
+        data = _post(full, headers)
+    except Exception as e:  # noqa: BLE001
+        # auto-degrade: drop the optional search params (the likely culprit of a 400)
+        log.warning("perplexity '%s' full request failed (%s); retrying minimal body",
+                    topic, e)
+        minimal = dict(base, search_recency_filter=_recency(cfg, topic, window))
+        data = _post(minimal, headers)
+
     content = data["choices"][0]["message"]["content"]
     return {"topic": topic, "text": content.strip(), "citations": _extract_sources(data)}
 

@@ -105,6 +105,16 @@ def _system_blocks(cfg: Config, targets: list[dict]) -> list[dict]:
     return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
 
+def _stream_text(client: anthropic.Anthropic, **kwargs) -> str:
+    """Stream the completion. Streaming is required for large max_tokens (the SDK
+    refuses non-streaming requests that could exceed 10 minutes)."""
+    parts: list[str] = []
+    with client.messages.stream(**kwargs) as stream:
+        for chunk in stream.text_stream:
+            parts.append(chunk)
+    return "".join(parts)
+
+
 def _user_message(window: LookbackWindow, research_text: str) -> str:
     return (
         f"Dzisiaj jest {polish_date_phrase(window.now)}. Przygotuj brief obejmujący "
@@ -125,14 +135,14 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> 
 
     log.info("generating script with %s (target ~%d words)...",
              model, round(cfg.target_minutes * cfg.wpm))
-    resp = client.messages.create(
+    raw = _stream_text(
+        client,
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
         system=_system_blocks(cfg, targets),
         messages=[{"role": "user", "content": _user_message(window, research_text)}],
     )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
     script = _parse(raw, targets)
     log.info("script v1: %d words across %d sections",
              script.total_words, len(script.sections))
@@ -171,12 +181,11 @@ def _expand(client, cfg, window, research_text, script, targets, model,
         "=== MATERIAŁ ŹRÓDŁOWY (do wykorzystania przy rozbudowie) ===\n"
         f"{research_text}"
     )
-    resp = client.messages.create(
-        model=model, max_tokens=max_tokens, temperature=temperature,
+    raw = _stream_text(
+        client, model=model, max_tokens=max_tokens, temperature=temperature,
         system=_system_blocks(cfg, targets),
         messages=[{"role": "user", "content": instruction}],
     )
-    raw = "".join(b.text for b in resp.content if b.type == "text")
     expanded = _parse(raw, targets)
     if expanded.total_words > script.total_words:
         log.info("expanded to %d words", expanded.total_words)

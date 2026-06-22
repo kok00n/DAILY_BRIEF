@@ -93,15 +93,24 @@ def _stooq_candidates(symbol: str) -> list[str]:
     return cands
 
 
-def _stooq_fetch_one(symbol: str, d1: str, d2: str) -> tuple[float | None, float | None, str | None]:
-    url = "https://stooq.com/q/d/l/"
+STOOQ_HOSTS = ("stooq.com", "stooq.pl")
+STOOQ_HEADERS = {
+    "User-Agent": UA["User-Agent"],
+    "Accept": "text/csv,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
+    "Referer": "https://stooq.com/",
+}
+
+
+def _stooq_fetch_one(host: str, symbol: str, d1: str, d2: str
+                     ) -> tuple[float | None, float | None, str | None]:
+    url = f"https://{host}/q/d/l/"
     params = {"s": symbol, "i": "d", "d1": d1, "d2": d2}
-    r = requests.get(url, params=params, timeout=HTTP_TIMEOUT, headers=UA)
+    r = requests.get(url, params=params, timeout=HTTP_TIMEOUT, headers=STOOQ_HEADERS)
     r.raise_for_status()
     text = r.text.strip()
-    if not text or text.lower().startswith("<") or "N/D" in text[:40] \
-            or not text.lower().startswith("date"):
-        raise ValueError(f"no CSV data for {symbol}: {text[:50]!r}")
+    if not text or not text.lower().startswith("date") or "N/D" in text[:40]:
+        raise ValueError(f"no CSV data ({host}): {text[:40]!r}")
     rows = list(csv.DictReader(io.StringIO(text)))
     closes = [(row["Date"], float(row["Close"])) for row in rows
               if row.get("Close") not in (None, "", "N/D")]
@@ -116,14 +125,16 @@ def _stooq_series(symbol: str, window: LookbackWindow) -> tuple[float | None, fl
     d1 = (window.start - timedelta(days=10)).strftime("%Y%m%d")
     d2 = window.now.strftime("%Y%m%d")
     last_err: Exception | None = None
-    for cand in _stooq_candidates(symbol):
-        try:
-            v, p, asof = _stooq_fetch_one(cand, d1, d2)
-            if cand != symbol:
-                log.info("stooq: '%s' resolved via variant '%s'", symbol, cand)
-            return v, p, asof
-        except Exception as e:  # noqa: BLE001
-            last_err = e
+    # try both hosts (separate rate limits) and both symbol spellings
+    for host in STOOQ_HOSTS:
+        for cand in _stooq_candidates(symbol):
+            try:
+                v, p, asof = _stooq_fetch_one(host, cand, d1, d2)
+                if cand != symbol or host != "stooq.com":
+                    log.info("stooq: '%s' resolved via %s / '%s'", symbol, host, cand)
+                return v, p, asof
+            except Exception as e:  # noqa: BLE001
+                last_err = e
     raise last_err or ValueError(f"Stooq failed for {symbol}")
 
 
