@@ -13,6 +13,9 @@ general:
 
 claude:
   model: "claude-opus-4-8"
+  # used only if the primary model stays overloaded after retries (a brief in
+  # Sonnet beats no brief). Set to "" to disable the fallback.
+  fallback_model: "claude-sonnet-4-6"
   max_tokens: 32000          # ceiling only — you pay for tokens actually generated
   # note: Opus 4.8 does not accept a 'temperature' param, so we don't send one.
 

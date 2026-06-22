@@ -106,11 +106,14 @@ def _system_blocks(cfg: Config, targets: list[dict]) -> list[dict]:
     return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
 
-def _stream_text(client: anthropic.Anthropic, attempts: int = 5, **kwargs) -> str:
-    """Stream the completion. Streaming is required for large max_tokens (the SDK
-    refuses non-streaming requests that could exceed 10 minutes). Retries transient
-    server errors (overloaded 529 / 429 / 5xx / connection) with backoff, since the
-    Anthropic API can be briefly overloaded."""
+# permanent client errors — never worth retrying
+_NON_RETRYABLE = {400, 401, 403, 404, 422}
+
+
+def _stream_text(client: anthropic.Anthropic, attempts: int = 6, **kwargs) -> str:
+    """Stream the completion (required for large max_tokens). Retries everything
+    except permanent client errors — covers overloaded_error, whose status_code is
+    NOT reliably set when it arrives as a mid-stream SSE event."""
     last: Exception | None = None
     for i in range(1, attempts + 1):
         try:
@@ -122,11 +125,9 @@ def _stream_text(client: anthropic.Anthropic, attempts: int = 5, **kwargs) -> st
         except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
             last = e
             status = getattr(e, "status_code", None)
-            retryable = isinstance(e, anthropic.APIConnectionError) or \
-                status in (408, 409, 429, 529) or (status or 0) >= 500
-            if not retryable or i == attempts:
+            if status in _NON_RETRYABLE or i == attempts:
                 raise
-            wait = min(60, 5 * 2 ** (i - 1))   # 5, 10, 20, 40, 60s
+            wait = min(60, 5 * 2 ** (i - 1))   # 5, 10, 20, 40, 60, 60s
             log.warning("Claude stream attempt %d/%d failed (%s); retry in %ds",
                         i, attempts, getattr(e, "message", str(e)), wait)
             time.sleep(wait)
@@ -148,24 +149,35 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> 
     client = _client(cfg)
     targets = _section_targets(cfg)
     model = cfg.get("claude", "model", default="claude-opus-4-8")
+    fallback = cfg.get("claude", "fallback_model", default="claude-sonnet-4-6")
     max_tokens = int(cfg.get("claude", "max_tokens", default=32000))
+    models = [model] + ([fallback] if fallback and fallback != model else [])
 
-    log.info("generating script with %s (target ~%d words)...",
-             model, round(cfg.target_minutes * cfg.wpm))
-    raw = _stream_text(
-        client,
-        model=model,
-        max_tokens=max_tokens,
-        system=_system_blocks(cfg, targets),
-        messages=[{"role": "user", "content": _user_message(window, research_text)}],
-    )
-    script = _parse(raw, targets)
-    log.info("script v1: %d words across %d sections",
-             script.total_words, len(script.sections))
-
+    system = _system_blocks(cfg, targets)
+    user = _user_message(window, research_text)
     target_total = round(cfg.target_minutes * cfg.wpm)
+
+    raw, used_model = "", model
+    for j, mdl in enumerate(models):
+        try:
+            log.info("generating script with %s (target ~%d words)...", mdl, target_total)
+            raw = _stream_text(client, model=mdl, max_tokens=max_tokens, system=system,
+                               messages=[{"role": "user", "content": user}])
+            used_model = mdl
+            break
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
+            if j + 1 < len(models):
+                log.warning("model %s unavailable (%s); falling back to %s",
+                            mdl, getattr(e, "message", str(e)), models[j + 1])
+            else:
+                raise
+
+    script = _parse(raw, targets)
+    log.info("script v1: %d words across %d sections (%s)",
+             script.total_words, len(script.sections), used_model)
+
     if script.total_words < 0.85 * target_total:
-        script = _expand(client, cfg, window, research_text, script, targets, model,
+        script = _expand(client, cfg, window, research_text, script, targets, used_model,
                          max_tokens)
     return script
 
@@ -197,11 +209,15 @@ def _expand(client, cfg, window, research_text, script, targets, model,
         "=== MATERIAŁ ŹRÓDŁOWY (do wykorzystania przy rozbudowie) ===\n"
         f"{research_text}"
     )
-    raw = _stream_text(
-        client, model=model, max_tokens=max_tokens,
-        system=_system_blocks(cfg, targets),
-        messages=[{"role": "user", "content": instruction}],
-    )
+    try:
+        raw = _stream_text(
+            client, model=model, max_tokens=max_tokens,
+            system=_system_blocks(cfg, targets),
+            messages=[{"role": "user", "content": instruction}],
+        )
+    except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
+        log.warning("expansion call failed (%s); keeping v1 script", getattr(e, "message", str(e)))
+        return script
     expanded = _parse(raw, targets)
     if expanded.total_words > script.total_words:
         log.info("expanded to %d words", expanded.total_words)
