@@ -13,7 +13,7 @@ general:
 
 claude:
   model: "claude-opus-4-8"
-  max_tokens: 22000
+  max_tokens: 32000          # ceiling only — you pay for tokens actually generated
   temperature: 0.4
 
 perplexity:

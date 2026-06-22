@@ -38,6 +38,9 @@ Struktura odcinka i wszystkie parametry: [config.yaml](config.yaml).
 - **Python 3.11+** (masz 3.11.9 ✅)
 - Klucze API: `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`
 - Darmowy `FRED_API_KEY` — rejestracja 1 min: https://fredaccount.stlouisfed.org/apikeys
+- `STOOQ_API_KEY` — wymagany od 2026 do pobierania CSV (rentowności CEE/Bund).
+  Pobierz: otwórz `https://stooq.com/q/d/?s=10ply.b&get_apikey`, przepisz captchę,
+  skopiuj wartość `apikey=...` z wygenerowanego linku.
 - Konto **Cloudflare** (darmowy R2) do hostingu MP3 + RSS
 - *(zalecane)* `ffmpeg` do czystego łączenia audio: `winget install Gyan.FFmpeg`
   (bez ffmpeg działa fallback — binarne łączenie MP3, też grywalne)
@@ -104,8 +107,8 @@ Workflow: [.github/workflows/daily-brief.yml](.github/workflows/daily-brief.yml)
    (`.env`, `output/`, MP3 są w `.gitignore` — nie trafią do repo.)
 2. Repo → **Settings → Secrets and variables → Actions → New repository secret** —
    dodaj każdy osobno: `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`,
-   `FRED_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
-   `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
+   `FRED_API_KEY`, `STOOQ_API_KEY`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+   `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
 3. Repo → **Actions** → *Daily Brief* → **Run workflow** (ręczny test). Przy błędzie
    pobierz artefakt `brief-debug-*` (log + skrypt + research).
 4. Dalej leci sam wg crona (domyślnie 03:00 UTC ≈ 05:00 latem / 04:00 zimą).

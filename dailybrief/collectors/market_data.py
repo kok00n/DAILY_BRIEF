@@ -102,10 +102,12 @@ STOOQ_HEADERS = {
 }
 
 
-def _stooq_fetch_one(host: str, symbol: str, d1: str, d2: str
+def _stooq_fetch_one(host: str, symbol: str, d1: str, d2: str, apikey: str = ""
                      ) -> tuple[float | None, float | None, str | None]:
     url = f"https://{host}/q/d/l/"
     params = {"s": symbol, "i": "d", "d1": d1, "d2": d2}
+    if apikey:
+        params["apikey"] = apikey   # required by Stooq since 2026 (lifts the IP limit)
     r = requests.get(url, params=params, timeout=HTTP_TIMEOUT, headers=STOOQ_HEADERS)
     r.raise_for_status()
     text = r.text.strip()
@@ -121,7 +123,8 @@ def _stooq_fetch_one(host: str, symbol: str, d1: str, d2: str
     return latest[1], prev, latest[0]
 
 
-def _stooq_series(symbol: str, window: LookbackWindow) -> tuple[float | None, float | None, str | None]:
+def _stooq_series(symbol: str, window: LookbackWindow, apikey: str = ""
+                  ) -> tuple[float | None, float | None, str | None]:
     d1 = (window.start - timedelta(days=10)).strftime("%Y%m%d")
     d2 = window.now.strftime("%Y%m%d")
     last_err: Exception | None = None
@@ -129,7 +132,7 @@ def _stooq_series(symbol: str, window: LookbackWindow) -> tuple[float | None, fl
     for host in STOOQ_HOSTS:
         for cand in _stooq_candidates(symbol):
             try:
-                v, p, asof = _stooq_fetch_one(host, cand, d1, d2)
+                v, p, asof = _stooq_fetch_one(host, cand, d1, d2, apikey)
                 if cand != symbol or host != "stooq.com":
                     log.info("stooq: '%s' resolved via %s / '%s'", symbol, host, cand)
                 return v, p, asof
@@ -164,7 +167,7 @@ def _fetch_one(item: dict, cfg: Config, window: LookbackWindow,
                 raise RuntimeError("FRED_API_KEY missing")
             v, p, asof = _fred_series(sid, fred_key)
         elif source == "stooq":
-            v, p, asof = _stooq_series(sid, window)
+            v, p, asof = _stooq_series(sid, window, cfg.env.get("STOOQ_API_KEY", ""))
         elif source == "yahoo":
             v, p, asof = _yahoo_series(sid)
         else:
