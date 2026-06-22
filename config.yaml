@@ -318,7 +318,7 @@ publish:
   #   2. cover_file      — an image committed in the repo; uploaded to R2 each run
   #   3. cover_generate  — a clean default cover generated with Pillow
   cover_image_url: ""
-  cover_file: "assets/cover.jpg"
+  cover_file: "cover.jpg"        # commit cover.jpg (or cover.png) to the repo root
   cover_generate: true
   keep_episodes: 30           # prune older MP3s from R2 beyond this many
   feed_filename: "feed.xml"
