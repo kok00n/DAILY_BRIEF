@@ -254,14 +254,13 @@ markets:
     - {name: "Fed funds (eff.)", source: fred, id: "DFF", unit: "%"}
     - {name: "US 5y breakeven", source: fred, id: "T5YIE", unit: "%"}
     - {name: "US HY OAS", source: fred, id: "BAMLH0A0HYM2", unit: "%"}
-    - {name: "DE 10Y (Bund)", source: stooq, id: "10dey.b", unit: "%"}
-    - {name: "DE 2Y",   source: stooq, id: "2dey.b", unit: "%"}
+    - {name: "DE 10Y (Bund)", source: stooq, id: "10ydey.b", unit: "%"}
+    - {name: "DE 2Y",   source: stooq, id: "2ydey.b", unit: "%"}
   rates_cee:
-    - {name: "PL 10Y", source: stooq, id: "10ply.b", unit: "%"}
-    - {name: "PL 2Y",  source: stooq, id: "2ply.b",  unit: "%"}
-    - {name: "PL 5Y",  source: stooq, id: "5ply.b",  unit: "%"}
-    - {name: "CZ 10Y", source: stooq, id: "10czy.b", unit: "%"}
-    - {name: "HU 10Y", source: stooq, id: "10huy.b", unit: "%"}
+    - {name: "PL 10Y", source: stooq, id: "10yply.b", unit: "%"}
+    - {name: "PL 2Y",  source: stooq, id: "2yply.b",  unit: "%"}  # skipped if Stooq lacks it
+    - {name: "CZ 10Y", source: stooq, id: "10yczy.b", unit: "%"}
+    - {name: "HU 10Y", source: stooq, id: "10yhuy.b", unit: "%"}
   fx:
     - {name: "DXY",     source: yahoo, id: "DX-Y.NYB"}
     - {name: "EUR/USD", source: yahoo, id: "EURUSD=X"}
