@@ -307,7 +307,7 @@ markets:
     - {name: "SOL", source: coingecko, id: "solana"}
 
 publish:
-  podcast_title: "Poranny Brief — Makro & Rates"
+  podcast_title: "Briefing Rynkowy"
   podcast_author: "DAILY_BRIEF"
   podcast_description: "Codzienny 40-minutowy brief makro: stopy, obligacje (cores + CEE), FX, akcje, surowce, krypto, FinTwit, AI oraz trade ideas."
   podcast_language: "pl"
