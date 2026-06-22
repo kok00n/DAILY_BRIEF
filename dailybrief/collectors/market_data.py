@@ -161,6 +161,12 @@ def _fetch_one(item: dict, cfg: Config, window: LookbackWindow,
     name, source, sid = item["name"], item["source"], item["id"]
     unit = item.get("unit", "")
     is_yield = unit in ("%", "bp") and source in ("fred", "stooq")
+    # Stooq needs an apikey since 2026; without one it just returns HTML. Skip
+    # quietly (no warning, no wasted request) so the brief runs cleanly without it.
+    if source == "stooq" and not cfg.env.get("STOOQ_API_KEY"):
+        q = _quote(name, None, None, unit, None, is_yield)
+        q["error"] = "skipped (no STOOQ_API_KEY)"
+        return q
     try:
         if source == "fred":
             if not fred_key:
