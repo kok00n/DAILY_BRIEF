@@ -258,7 +258,6 @@ markets:
     - {name: "DE 2Y",   source: stooq, id: "2ydey.b", unit: "%"}
   rates_cee:
     - {name: "PL 10Y", source: stooq, id: "10yply.b", unit: "%"}
-    - {name: "PL 2Y",  source: stooq, id: "2yply.b",  unit: "%"}  # skipped if Stooq lacks it
     - {name: "CZ 10Y", source: stooq, id: "10yczy.b", unit: "%"}
     - {name: "HU 10Y", source: stooq, id: "10yhuy.b", unit: "%"}
   fx:
