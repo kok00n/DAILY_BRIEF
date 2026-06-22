@@ -237,6 +237,18 @@ check("CNB ARAD csv parsed (YYYYMMDD + decimal)", cnb == [("2026-06-19", 4.75), 
 fred = cy._parse_fred_csv("observation_date,IRLTLT01PLM156N\n2026-03-01,5.80\n2026-04-01,.\n2026-05-01,5.74\n")
 check("FRED monthly csv parsed (skips '.')", fred[-1] == ("2026-05-01", 5.74), str(fred))
 
+stq = cy._parse_stooq_csv("Date,Open,High,Low,Close,Volume\n"
+                          "2026-06-19,5.60,5.62,5.58,5.61,0\n2026-06-22,5.61,5.65,5.60,5.64,0\n")
+check("Stooq CSV parsed (Close = yield, col 4)", stq == [("2026-06-19", 5.61), ("2026-06-22", 5.64)],
+      str(stq))
+check("Stooq symbol candidates toggle 'y'", cy._stooq_candidates("10yply.b") == ["10yply.b", "10ply.b"])
+try:
+    cy._parse_stooq_csv("Access denied")
+    _denied_ok = False
+except ValueError:
+    _denied_ok = True
+check("Stooq 'Access denied' rejected (not parsed as data)", _denied_ok)
+
 print("== PL snapshot parse (hardened) ==")
 check("PL dated line", cy._parse_pl_line("PL=5.74,+3,2026-06-19") == (5.74, 3, "2026-06-19"))
 check("PL change-only line", cy._parse_pl_line("PL=5.74,-2") == (5.74, -2, None))

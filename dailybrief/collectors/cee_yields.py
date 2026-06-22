@@ -6,22 +6,21 @@ today's. Per instrument we use the best free source reachable from a datacenter
 IP, with a deterministic monthly anchor (FRED/OECD, keyless) acting as both a
 fallback and a plausibility check:
 
-  DE 10Y / 2Y : Deutsche Bundesbank REST API (daily, no key)
-                -> ECB euro-area AAA curve (daily, proxy) -> FRED monthly
-  CZ 10Y      : CNB ARAD REST API (daily, needs free CNB_API_KEY) -> FRED monthly
-  PL 10Y      : hardened Perplexity snapshot (daily, validated vs the anchor:
-                explicit close date + plausibility band) -> FRED monthly
-  HU 10Y      : FRED/OECD monthly (robust, keyless). HU has no free *daily*
-                source (ÁKK is JS-locked); MNB's file is monthly too, available
-                as an optional override via cee_yields.mnb_xls_url.
+  DE 10Y / 2Y : Bundesbank REST (daily, no key) -> ECB euro-AAA curve (daily proxy)
+                -> Stooq (daily) -> FRED monthly
+  PL 10Y      : Stooq (daily, keyless CSV via stooq.pl) -> hardened Perplexity
+                snapshot (validated: explicit close date + plausibility band) -> FRED monthly
+  CZ 10Y      : Stooq (daily, keyless) -> CNB ARAD REST (daily, free CNB_API_KEY) -> FRED monthly
+  HU 10Y      : Stooq (daily, keyless) -> MNB .xls (monthly, optional) -> FRED monthly
 
-Every quote carries its real as-of date and a `freshness` tag
-(daily | monthly | na). The monthly path is honest, not stale-disguised-as-fresh:
-the renderer flags it as "dane miesięczne".
+A daily feed is only accepted if its latest point is plausible AND <=7 days old,
+so a frozen/stale series can never read as today's print. Every quote carries its
+real as-of date and a `freshness` tag (daily | monthly | na); the monthly path is
+honest, not stale-disguised-as-fresh — the renderer flags it "dane miesięczne".
 
-Why this replaced the old TradingEconomics scrape: TE is Cloudflare-blocked from
-datacenter IPs, and when it did parse, the meta-description regex often grabbed a
-prior/historical print — so the numbers were unreliable and frequently stale.
+Why this replaced TradingEconomics: TE is Cloudflare-blocked from datacenter IPs,
+and when it did parse, the meta-description regex often grabbed a prior print.
+Stooq's keyless CSV works from stooq.pl (stooq.com tends to "Access denied").
 """
 from __future__ import annotations
 
@@ -204,6 +203,45 @@ def _parse_fred_csv(text: str) -> list[tuple[str, float]]:
     return out
 
 
+def _stooq_candidates(symbol: str) -> list[str]:
+    """Stooq spells yield symbols both '10yply.b' and '10ply.b' — try the given
+    form, then the one with the leading-maturity 'y' toggled."""
+    cands = [symbol]
+    m = re.match(r"^(\d+)(y?)(.+)$", symbol)
+    if m:
+        digits, y, rest = m.groups()
+        alt = f"{digits}{'' if y else 'y'}{rest}"
+        if alt != symbol:
+            cands.append(alt)
+    return cands
+
+
+def _parse_stooq_csv(text: str) -> list[tuple[str, float]]:
+    """Daily CSV (Date,Open,High,Low,Close,Volume). Close = the yield. Tolerates
+    an English or Polish header and reads Close positionally (column index 4)."""
+    text = text.strip()
+    head = text[:80].lower()
+    if not text or "access denied" in head or "n/d" in text[:40].lower():
+        raise ValueError(f"no CSV: {text[:60]!r}")
+    out: list[tuple[str, float]] = []
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        return []
+    start = 1 if rows[0] and rows[0][0].strip().lower() in ("date", "data") else 0
+    for row in rows[start:]:
+        if len(row) < 5:
+            continue
+        d, close = row[0].strip(), row[4].strip()
+        if not re.match(r"\d{4}-\d{2}-\d{2}$", d):
+            continue
+        try:
+            out.append((d, float(close)))
+        except ValueError:
+            continue
+    out.sort()
+    return out
+
+
 _PL_DATED = re.compile(r"PL\s*=\s*(\d+(?:\.\d+)?)\s*,\s*([+-]?\d+|na)\s*,\s*(\d{4}-\d{2}-\d{2})", re.I)
 _PL_CHG = re.compile(r"PL\s*=\s*(\d+(?:\.\d+)?)\s*,\s*([+-]?\d+|na)", re.I)
 _PL_LVL = re.compile(r"PL\s*=\s*(\d+(?:\.\d+)?)", re.I)
@@ -293,6 +331,26 @@ def _fred_monthly(series: str) -> list[tuple[str, float]]:
     return _parse_fred_csv(r.text)
 
 
+def _stooq(symbol: str, hosts: list[str]) -> list[tuple[str, float]]:
+    """Keyless daily CSV. stooq.pl serves it; stooq.com tends to 'Access denied'
+    from some IPs — try hosts in order, and both symbol spellings."""
+    last_err: Exception | None = None
+    for host in hosts:
+        for cand in _stooq_candidates(symbol):
+            try:
+                pairs = _parse_stooq_csv(_get(f"https://{host}/q/d/l/",
+                                              {"s": cand, "i": "d"}).text)
+                if pairs:
+                    if host != hosts[0] or cand != symbol:
+                        log.info("stooq: '%s' via %s/'%s'", symbol, host, cand)
+                    return pairs
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+    if last_err:
+        raise last_err
+    return []
+
+
 def _mnb_xls(url: str, header_row: int, val_col: int) -> list[tuple[str, float]]:
     content = _get(url).content
     try:
@@ -349,48 +407,85 @@ def _anchor_quote(name: str, anchor: tuple[str, float] | None, cat: str,
     return _mk_quote(name, None, None, None, "n/a", cat, "na")
 
 
+def _daily_quote(name: str, cat: str, label: str, pairs: list[tuple[str, float]],
+                 lo: float, hi: float, window: LookbackWindow) -> dict[str, Any] | None:
+    """Build a daily quote from ascending (date, value) pairs, but only if the
+    latest value is plausible AND recent (<=7 days) — a frozen/stale series is
+    rejected so it can never read as today's print."""
+    d, v, prev = _last_two(pairs)
+    if _within(v, lo, hi) and _recent(d, window, max_days=7):
+        return _mk_quote(name, v, _change_bp(v, prev), d, label, cat, "daily")
+    return None
+
+
+def _try_stooq(name: str, cat: str, symbol: str | None, hosts: list[str],
+               lo: float, hi: float, window: LookbackWindow,
+               sources: list[str], tag: str) -> dict[str, Any] | None:
+    if not symbol:
+        return None
+    try:
+        q = _daily_quote(name, cat, "stooq", _stooq(symbol, hosts), lo, hi, window)
+        if q:
+            sources.append(f"{tag}:stooq")
+            return q
+    except Exception as e:  # noqa: BLE001
+        log.info("%s Stooq failed (%s)", tag, type(e).__name__)
+    return None
+
+
 def _resolve_de(name: str, tag: str, bb_series: str | None, ecb_series: str | None,
-                base: str, anchor: tuple[str, float] | None, lo: float, hi: float,
-                sources: list[str]) -> dict[str, Any]:
+                base: str, sym: str | None, hosts: list[str],
+                anchor: tuple[str, float] | None, lo: float, hi: float,
+                window: LookbackWindow, sources: list[str]) -> dict[str, Any]:
     if bb_series:
         try:
-            d, v, prev = _last_two(_bundesbank(bb_series, base))
-            if _within(v, lo, hi):
+            q = _daily_quote(name, "cores", "bundesbank", _bundesbank(bb_series, base),
+                             lo, hi, window)
+            if q:
                 sources.append(f"{tag}:bundesbank")
-                return _mk_quote(name, v, _change_bp(v, prev), d, "bundesbank", "cores", "daily")
+                return q
         except Exception as e:  # noqa: BLE001
             log.info("%s Bundesbank failed (%s) — trying ECB", tag, type(e).__name__)
     if ecb_series:
         try:
-            d, v, prev = _last_two(_ecb(ecb_series))
-            if _within(v, lo, hi):
+            q = _daily_quote(name, "cores", "ecb (euro AAA)", _ecb(ecb_series), lo, hi, window)
+            if q:
                 sources.append(f"{tag}:ecb")
-                return _mk_quote(name, v, _change_bp(v, prev), d, "ecb (euro AAA)", "cores", "daily")
+                return q
         except Exception as e:  # noqa: BLE001
-            log.info("%s ECB failed (%s) — falling back to monthly", tag, type(e).__name__)
+            log.info("%s ECB failed (%s) — trying Stooq", tag, type(e).__name__)
+    q = _try_stooq(name, "cores", sym, hosts, lo, hi, window, sources, tag)
+    if q:
+        return q
     return _anchor_quote(name, anchor, "cores", sources, tag)
 
 
-def _resolve_cz(name: str, cfg: Config, sc: dict, anchor: tuple[str, float] | None,
-                lo: float, hi: float, sources: list[str]) -> dict[str, Any]:
+def _resolve_cz(name: str, cfg: Config, sc: dict, sym: str | None, hosts: list[str],
+                anchor: tuple[str, float] | None, lo: float, hi: float,
+                window: LookbackWindow, sources: list[str]) -> dict[str, Any]:
+    q = _try_stooq(name, "cee", sym, hosts, lo, hi, window, sources, "CZ")
+    if q:
+        return q
     key = cfg.env.get("CNB_API_KEY", "")
     indicator = sc.get("cnb_indicator_10y") or CNB_INDICATOR_10Y
     if key and not key.endswith("...") and indicator:
         try:
-            d, v, prev = _last_two(_cnb(indicator, key))
-            if _within(v, lo, hi):
+            q = _daily_quote(name, "cee", "cnb arad", _cnb(indicator, key), lo, hi, window)
+            if q:
                 sources.append("CZ:cnb")
-                return _mk_quote(name, v, _change_bp(v, prev), d, "cnb arad", "cee", "daily")
+                return q
             log.info("CZ CNB returned no usable value — falling back to monthly")
         except Exception as e:  # noqa: BLE001
             log.info("CZ CNB failed (%s) — falling back to monthly", type(e).__name__)
-    else:
-        log.info("CZ: no CNB_API_KEY — using monthly anchor")
     return _anchor_quote(name, anchor, "cee", sources, "CZ")
 
 
-def _resolve_hu(name: str, sc: dict, anchor: tuple[str, float] | None,
-                lo: float, hi: float, sources: list[str]) -> dict[str, Any]:
+def _resolve_hu(name: str, sc: dict, sym: str | None, hosts: list[str],
+                anchor: tuple[str, float] | None, lo: float, hi: float,
+                window: LookbackWindow, sources: list[str]) -> dict[str, Any]:
+    q = _try_stooq(name, "cee", sym, hosts, lo, hi, window, sources, "HU")
+    if q:
+        return q
     url = (sc.get("mnb_xls_url") or "").strip()
     if url:
         try:
@@ -404,9 +499,15 @@ def _resolve_hu(name: str, sc: dict, anchor: tuple[str, float] | None,
     return _anchor_quote(name, anchor, "cee", sources, "HU")
 
 
-def _resolve_pl(name: str, cfg: Config, anchor: tuple[str, float] | None,
-                lo: float, hi: float, max_dev: float, window: LookbackWindow,
+def _resolve_pl(name: str, cfg: Config, sym: str | None, hosts: list[str],
+                anchor: tuple[str, float] | None, lo: float, hi: float,
+                max_dev: float, window: LookbackWindow,
                 sources: list[str]) -> dict[str, Any]:
+    # 1) Stooq daily CSV (keyless; stooq.pl) — the user's proven path
+    q = _try_stooq(name, "cee", sym, hosts, lo, hi, window, sources, "PL")
+    if q:
+        return q
+    # 2) hardened snapshot (validated against the anchor) -> 3) monthly anchor
     snap = _pl_snapshot(cfg)
     if snap:
         v, chg, d = snap
@@ -435,6 +536,10 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     lo = float(sanity.get("min", SANITY_MIN))
     hi = float(sanity.get("max", SANITY_MAX))
     max_dev = float(sanity.get("snapshot_max_dev_pp", SNAPSHOT_MAX_DEV))
+    stq = sc.get("stooq", {}) or {}
+    stq_hosts = stq.get("hosts") or ["stooq.pl", "stooq.com"]
+    stq_syms = stq.get("symbols") or {"PL": "10yply.b", "CZ": "10yczy.b",
+                                      "HU": "10yhuy.b", "DE": "10ydey.b"}
 
     # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
     anchors: dict[str, tuple[str, float]] = {}
@@ -448,13 +553,16 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
 
     sources: list[str] = []
     quotes = [
-        _resolve_de("DE 10Y (Bund)", "DE10", bb_10y, ecb_10y, base,
-                    anchors.get("DE"), lo, hi, sources),
-        _resolve_de("DE 2Y (Schatz)", "DE2", bb_2y, ecb_2y, base,
-                    None, lo, hi, sources),   # no 2Y monthly anchor exists
-        _resolve_pl("PL 10Y", cfg, anchors.get("PL"), lo, hi, max_dev, window, sources),
-        _resolve_cz("CZ 10Y", cfg, sc, anchors.get("CZ"), lo, hi, sources),
-        _resolve_hu("HU 10Y", sc, anchors.get("HU"), lo, hi, sources),
+        _resolve_de("DE 10Y (Bund)", "DE10", bb_10y, ecb_10y, base, stq_syms.get("DE"),
+                    stq_hosts, anchors.get("DE"), lo, hi, window, sources),
+        _resolve_de("DE 2Y (Schatz)", "DE2", bb_2y, ecb_2y, base, None,
+                    stq_hosts, None, lo, hi, window, sources),   # no 2Y monthly anchor
+        _resolve_pl("PL 10Y", cfg, stq_syms.get("PL"), stq_hosts,
+                    anchors.get("PL"), lo, hi, max_dev, window, sources),
+        _resolve_cz("CZ 10Y", cfg, sc, stq_syms.get("CZ"), stq_hosts,
+                    anchors.get("CZ"), lo, hi, window, sources),
+        _resolve_hu("HU 10Y", sc, stq_syms.get("HU"), stq_hosts,
+                    anchors.get("HU"), lo, hi, window, sources),
     ]
 
     ok = sum(1 for q in quotes if q["ok"])
