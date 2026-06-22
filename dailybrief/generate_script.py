@@ -40,12 +40,13 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\S+", text))
 
 
-def _section_targets(cfg: Config) -> list[dict]:
+def _section_targets(cfg: Config, lang: str = "pl") -> list[dict]:
     wpm = cfg.wpm
     out = []
     for s in cfg.sections:
+        title = s.get("title_en") if lang == "en" and s.get("title_en") else s["title"]
         out.append({
-            "id": s["id"], "title": s["title"],
+            "id": s["id"], "title": title,
             "target_words": round(s.get("target_min", 3) * wpm),
             "emphasis": bool(s.get("emphasis")),
             "feeds": s.get("feeds", []),
@@ -53,14 +54,17 @@ def _section_targets(cfg: Config) -> list[dict]:
     return out
 
 
-def _outline_text(targets: list[dict]) -> str:
+def _outline_text(targets: list[dict], lang: str = "pl") -> str:
+    if lang == "en":
+        star_txt, tmpl = "  (KEY SECTION — most attention)", \
+            '{i}. id="{id}", title="{title}", target ~{tw} words{star}'
+    else:
+        star_txt, tmpl = "  (SEKCJA KLUCZOWA — najwięcej uwagi)", \
+            '{i}. id="{id}", tytuł="{title}", cel ~{tw} słów{star}'
     lines = []
     for i, t in enumerate(targets, 1):
-        star = "  (SEKCJA KLUCZOWA — najwięcej uwagi)" if t["emphasis"] else ""
-        lines.append(
-            f'{i}. id="{t["id"]}", tytuł="{t["title"]}", '
-            f'cel ~{t["target_words"]} słów{star}'
-        )
+        lines.append(tmpl.format(i=i, id=t["id"], title=t["title"],
+                                 tw=t["target_words"], star=(star_txt if t["emphasis"] else "")))
     return "\n".join(lines)
 
 
@@ -95,13 +99,14 @@ def _client(cfg: Config) -> anthropic.Anthropic:
     return anthropic.Anthropic(api_key=cfg.require_env("ANTHROPIC_API_KEY"))
 
 
-def _system_blocks(cfg: Config, targets: list[dict]) -> list[dict]:
-    tmpl = (PROMPTS_DIR / "system_brief.md").read_text(encoding="utf-8")
+def _system_blocks(cfg: Config, targets: list[dict],
+                   prompt_file: str = "system_brief.md", lang: str = "pl") -> list[dict]:
+    tmpl = (PROMPTS_DIR / prompt_file).read_text(encoding="utf-8")
     total_words = round(cfg.target_minutes * cfg.wpm)
     system = tmpl.format(
         minutes=cfg.target_minutes,
         total_words=total_words,
-        section_outline=_outline_text(targets),
+        section_outline=_outline_text(targets, lang),
     )
     return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
@@ -134,7 +139,18 @@ def _stream_text(client: anthropic.Anthropic, attempts: int = 6, **kwargs) -> st
     raise last  # type: ignore[misc]
 
 
-def _user_message(window: LookbackWindow, research_text: str) -> str:
+def _user_message(window: LookbackWindow, research_text: str, lang: str = "pl") -> str:
+    if lang == "en":
+        win = ("the weekend (since Friday)" if window.is_monday_after_weekend
+               else "the last 24 hours")
+        return (
+            f"Today is {window.now.strftime('%A, %d %B %Y')}. Prepare a brief covering "
+            f"events from {win}.\n\n"
+            "Below is the source material (market data, news, FinTwit/analysts). Use it, "
+            "synthesise, connect the threads and make sense of them — do not read it point "
+            "by point. If something is missing, say so briefly.\n\n"
+            f"{research_text}"
+        )
     return (
         f"Dzisiaj jest {polish_date_phrase(window.now)}. Przygotuj brief obejmujący "
         f"wydarzenia z {window.label_pl}.\n\n"
@@ -145,22 +161,28 @@ def _user_message(window: LookbackWindow, research_text: str) -> str:
     )
 
 
-def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> BriefScript:
+def generate_script(cfg: Config, window: LookbackWindow, research_text: str,
+                    edition: dict | None = None) -> BriefScript:
+    edition = edition or {"id": "pl", "language": "pl", "prompt": "system_brief.md"}
+    lang = edition.get("language", "pl")
+    prompt_file = edition.get("prompt", "system_brief.md")
+
     client = _client(cfg)
-    targets = _section_targets(cfg)
+    targets = _section_targets(cfg, lang)
     model = cfg.get("claude", "model", default="claude-opus-4-8")
     fallback = cfg.get("claude", "fallback_model", default="claude-sonnet-4-6")
     max_tokens = int(cfg.get("claude", "max_tokens", default=32000))
     models = [model] + ([fallback] if fallback and fallback != model else [])
 
-    system = _system_blocks(cfg, targets)
-    user = _user_message(window, research_text)
+    system = _system_blocks(cfg, targets, prompt_file, lang)
+    user = _user_message(window, research_text, lang)
     target_total = round(cfg.target_minutes * cfg.wpm)
 
     raw, used_model = "", model
     for j, mdl in enumerate(models):
         try:
-            log.info("generating script with %s (target ~%d words)...", mdl, target_total)
+            log.info("[%s] generating script with %s (target ~%d words)...",
+                     edition.get("id", lang), mdl, target_total)
             raw = _stream_text(client, model=mdl, max_tokens=max_tokens, system=system,
                                messages=[{"role": "user", "content": user}])
             used_model = mdl
@@ -173,46 +195,61 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str) -> 
                 raise
 
     script = _parse(raw, targets)
-    log.info("script v1: %d words across %d sections (%s)",
-             script.total_words, len(script.sections), used_model)
+    log.info("[%s] script v1: %d words across %d sections (%s)",
+             edition.get("id", lang), script.total_words, len(script.sections), used_model)
 
     if script.total_words < 0.85 * target_total:
         script = _expand(client, cfg, window, research_text, script, targets, used_model,
-                         max_tokens)
+                         max_tokens, lang, prompt_file)
     return script
 
 
 def _expand(client, cfg, window, research_text, script, targets, model,
-            max_tokens) -> BriefScript:
+            max_tokens, lang="pl", prompt_file="system_brief.md") -> BriefScript:
     by_id = {t["id"]: t for t in targets}
     short = [s for s in script.sections
              if s["id"] in by_id and s["words"] < 0.8 * by_id[s["id"]]["target_words"]]
     if not short:
         return script
-    deficits = "\n".join(
-        f'- {s["id"]} ("{s["title"]}"): masz ~{s["words"]} słów, cel '
-        f'~{by_id[s["id"]]["target_words"]} słów'
-        for s in short
-    )
     log.info("script too short (%d w); expanding %d sections",
              script.total_words, len(short))
-    instruction = (
-        "Twój poprzedni brief jest za krótki. Poniżej masz pełny dotychczasowy "
-        "skrypt. Zwróć GO PONOWNIE W CAŁOŚCI w tym samym formacie (TITLE, "
-        "[[SUMMARY]], sekcje z markerami [[SECTION:id|Tytuł]]), ale rozbuduj "
-        "wskazane sekcje do docelowej długości — pogłębiając analizę, kontekst, "
-        "mechanizmy i implikacje, bez zmyślania nowych liczb. Pozostałe sekcje "
-        "możesz zostawić bez zmian.\n\n"
-        f"Sekcje do rozbudowania:\n{deficits}\n\n"
-        "=== DOTYCHCZASOWY SKRYPT ===\n"
-        f"{script.raw}\n\n"
-        "=== MATERIAŁ ŹRÓDŁOWY (do wykorzystania przy rozbudowie) ===\n"
-        f"{research_text}"
-    )
+    if lang == "en":
+        deficits = "\n".join(
+            f'- {s["id"]} ("{s["title"]}"): ~{s["words"]} words, target '
+            f'~{by_id[s["id"]]["target_words"]} words' for s in short)
+        instruction = (
+            "Your previous brief is too short. Below is the full current script. Return "
+            "IT AGAIN IN FULL in the same format (TITLE, [[SUMMARY]], sections with "
+            "[[SECTION:id|Title]] markers), but expand the listed sections to the target "
+            "length — deepening analysis, context, mechanisms and implications, without "
+            "inventing new numbers. You may leave the other sections unchanged.\n\n"
+            f"Sections to expand:\n{deficits}\n\n"
+            "=== CURRENT SCRIPT ===\n"
+            f"{script.raw}\n\n"
+            "=== SOURCE MATERIAL (to draw on when expanding) ===\n"
+            f"{research_text}"
+        )
+    else:
+        deficits = "\n".join(
+            f'- {s["id"]} ("{s["title"]}"): masz ~{s["words"]} słów, cel '
+            f'~{by_id[s["id"]]["target_words"]} słów' for s in short)
+        instruction = (
+            "Twój poprzedni brief jest za krótki. Poniżej masz pełny dotychczasowy "
+            "skrypt. Zwróć GO PONOWNIE W CAŁOŚCI w tym samym formacie (TITLE, "
+            "[[SUMMARY]], sekcje z markerami [[SECTION:id|Tytuł]]), ale rozbuduj "
+            "wskazane sekcje do docelowej długości — pogłębiając analizę, kontekst, "
+            "mechanizmy i implikacje, bez zmyślania nowych liczb. Pozostałe sekcje "
+            "możesz zostawić bez zmian.\n\n"
+            f"Sekcje do rozbudowania:\n{deficits}\n\n"
+            "=== DOTYCHCZASOWY SKRYPT ===\n"
+            f"{script.raw}\n\n"
+            "=== MATERIAŁ ŹRÓDŁOWY (do wykorzystania przy rozbudowie) ===\n"
+            f"{research_text}"
+        )
     try:
         raw = _stream_text(
             client, model=model, max_tokens=max_tokens,
-            system=_system_blocks(cfg, targets),
+            system=_system_blocks(cfg, targets, prompt_file, lang),
             messages=[{"role": "user", "content": instruction}],
         )
     except (anthropic.APIStatusError, anthropic.APIConnectionError) as e:
@@ -226,11 +263,12 @@ def _expand(client, cfg, window, research_text, script, targets, model,
     return script
 
 
-def save_script(script: BriefScript, date_str: str) -> dict[str, Path]:
+def save_script(script: BriefScript, date_str: str, edition_id: str = "pl") -> dict[str, Path]:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    txt = OUTPUT_DIR / f"script_{date_str}.txt"
+    tag = "" if edition_id in ("", "pl") else f"_{edition_id}"
+    txt = OUTPUT_DIR / f"script_{date_str}{tag}.txt"
     txt.write_text(script.full_narration(), encoding="utf-8")
-    js = OUTPUT_DIR / f"script_{date_str}.json"
+    js = OUTPUT_DIR / f"script_{date_str}{tag}.json"
     js.write_text(json.dumps({
         "title": script.title, "summary": script.summary,
         "total_words": script.total_words,

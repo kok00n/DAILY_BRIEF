@@ -164,8 +164,12 @@ Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
 ## Najważniejsze parametry ([config.yaml](config.yaml))
 
 - `general.brief_target_minutes` — długość (domyślnie 40), `words_per_minute` — tempo
-- `voice.name` — `pl-PL-MarekNeural` lub `pl-PL-ZofiaNeural`; `voice.rate` np. `-5%`
-- `sections` — kolejność, tytuły i docelowe minuty (steruje też długością)
+- `editions` — wersje językowe z tego samego researchu (domyślnie **PL + EN**); każda
+  ma własny `prompt`, `voice` i flagę `apply_pronunciations`. Oba odcinki lądują w
+  jednym feedzie (PL i `[EN]` codziennie). Usuń edycję = jeden język.
+- `voice.name` — domyślny/zapasowy głos; `voice.rate` np. `-5%`; `voice.pronunciations`
+  — słownik wymowy (stosowany tylko gdy `apply_pronunciations: true`, czyli dla PL)
+- `sections` — kolejność, `title`/`title_en`, docelowe minuty (steruje też długością)
 - `grok.topic_groups` — grupy tematów X (każda grupa = osobny, głębszy `x_search`
   po całym X; rates ma własny pass; keywordy/cashtagi ostrzą recall);
   `grok.priority_handles` — lista „never-miss" (auto-batchowana po ≤20 kont)

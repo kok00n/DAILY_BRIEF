@@ -175,8 +175,25 @@ grok:
     - rafalhirsch        # Rafał Hirsch — PL markets/rates journalist
     - iggnacy            # Ignacy Morawski — PL macro economist (Puls Biznesu)
 
+# Two daily editions from the SAME research: Polish + English. Each runs its own
+# script generation (own prompt + language) and its own TTS voice; both episodes
+# are published into one feed. Add/remove editions freely.
+editions:
+  - id: pl
+    language: pl
+    prompt: system_brief.md
+    voice: pl-PL-MarekNeural
+    apply_pronunciations: true      # phonetic respelling of EN jargon (PL voice)
+    title_prefix: ""
+  - id: en
+    language: en
+    prompt: system_brief_en.md
+    voice: en-US-AndrewMultilingualNeural   # natural English Azure voice (free)
+    apply_pronunciations: false     # English voice says English natively
+    title_prefix: "[EN] "
+
 voice:
-  name: "pl-PL-MarekNeural"    # or pl-PL-ZofiaNeural
+  name: "pl-PL-MarekNeural"    # default / fallback voice if an edition omits 'voice'
   rate: "+0%"                  # e.g. "-5%" to slow down, "+8%" to speed up
   pitch: "+0Hz"
   # Audio format from edge-tts: 24kHz mono mp3 @ 48kbps -> ~14 MB for 40 min.
@@ -304,47 +321,58 @@ voice:
 sections:
   - id: open
     title: "Otwarcie i TL;DR dnia"
+    title_en: "Open and daily TL;DR"
     target_min: 2
     feeds: [market, news]
   - id: agenda
     title: "Kalendarz na dziś — co i o której"
+    title_en: "Today's calendar — what and when"
     target_min: 3
     feeds: [calendar]
   - id: overnight
     title: "Sesja nocna — co się ruszyło"
+    title_en: "Overnight session — what moved"
     target_min: 2
     feeds: [market, news, social]
   - id: rates
     title: "Stopy i obligacje — cores i CEE"
+    title_en: "Rates and bonds — cores and CEE"
     target_min: 9
     feeds: [market, news, social]
     emphasis: true            # primary focus area
   - id: fx
     title: "FX, DXY i złoty"
+    title_en: "FX, DXY and the zloty"
     target_min: 4
     feeds: [market, news]
   - id: equities
     title: "Akcje — US, Europa i GPW"
+    title_en: "Equities — US, Europe and Warsaw (GPW)"
     target_min: 4
     feeds: [market, news, social]
   - id: commodities
     title: "Surowce — ropa, złoto, gaz"
+    title_en: "Commodities — oil, gold, gas"
     target_min: 2
     feeds: [market, news]
   - id: crypto
     title: "Krypto"
+    title_en: "Crypto"
     target_min: 4
     feeds: [market, news, social]
   - id: fintwit
     title: "FinTwit i sentyment"
+    title_en: "FinTwit and sentiment"
     target_min: 3
     feeds: [social]
   - id: ai_tech
     title: "AI i technologie — nowinki i zastosowania"
+    title_en: "AI and tech — news and use-cases"
     target_min: 4
     feeds: [news, social]
   - id: trade_ideas
     title: "Trade ideas"
+    title_en: "Trade ideas"
     target_min: 3
     feeds: [market, news, social]
     emphasis: true

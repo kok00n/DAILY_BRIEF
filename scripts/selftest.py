@@ -229,5 +229,31 @@ xml_cov = publish._build_feed(cfg, fake_eps, "https://pub-xxxx.r2.dev",
 check("feed carries itunes:image when cover set",
       "itunes:image" in xml_cov and "cover.png" in xml_cov)
 
+print("== editions (PL + EN) ==")
+from dailybrief.generate_script import _outline_text  # noqa: E402
+eds = cfg.get("editions", default=[])
+check("two editions configured", len(eds) >= 2, str([e.get("id") for e in eds]))
+en = next((e for e in eds if e.get("id") == "en"), None)
+check("EN edition: lang=en, en-* voice, no pronunciations",
+      bool(en) and en["language"] == "en" and en["voice"].startswith("en-")
+      and en["apply_pronunciations"] is False, str(en))
+t_en = _section_targets(cfg, "en")
+rates_en = next((t for t in t_en if t["id"] == "rates"), {})
+check("EN section titles applied", "Rates and bonds" in rates_en.get("title", ""),
+      rates_en.get("title"))
+check("EN outline wording", "target ~" in _outline_text(t_en, "en"))
+two = [
+    {"date": "20260622", "edition": "pl", "title": "Brief PL — 20260622", "summary": "s",
+     "mp3_key": "episodes/brief_20260622.mp3", "url": "https://x/a.mp3", "duration_s": 2400,
+     "size_bytes": 1, "pubdate": datetime(2026, 6, 22, 4, 30, tzinfo=timezone.utc).isoformat()},
+    {"date": "20260622", "edition": "en", "title": "[EN] Brief — 20260622", "summary": "s",
+     "mp3_key": "episodes/brief_20260622_en.mp3", "url": "https://x/b.mp3", "duration_s": 2400,
+     "size_bytes": 1, "pubdate": datetime(2026, 6, 22, 4, 31, tzinfo=timezone.utc).isoformat()},
+]
+xml2 = publish._build_feed(cfg, two, "https://pub-xxxx.r2.dev",
+                           "https://pub-xxxx.r2.dev/cover.jpg").decode("utf-8")
+check("feed has 2 items (PL+EN)", xml2.count("<item>") == 2, str(xml2.count("<item>")))
+check("feed includes [EN] item", "[EN]" in xml2)
+
 print(f"\n== RESULT: {PASS} passed, {FAIL} failed ==")
 sys.exit(1 if FAIL else 0)

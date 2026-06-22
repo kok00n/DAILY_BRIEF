@@ -26,9 +26,13 @@ from dailybrief.generate_script import BriefScript
 from dailybrief.util import OUTPUT_DIR, compute_window, setup_logging
 
 
-def _load_script(date_str: str) -> BriefScript:
-    js = OUTPUT_DIR / f"script_{date_str}.json"
-    data = json.loads(js.read_text(encoding="utf-8"))
+def _script_json(date_str: str, edition_id: str = "pl") -> "Path":
+    tag = "" if edition_id in ("", "pl") else f"_{edition_id}"
+    return OUTPUT_DIR / f"script_{date_str}{tag}.json"
+
+
+def _load_script(date_str: str, edition_id: str = "pl") -> BriefScript:
+    data = json.loads(_script_json(date_str, edition_id).read_text(encoding="utf-8"))
     return BriefScript(title=data["title"], summary=data["summary"],
                        sections=data["sections"], raw="")
 
@@ -68,38 +72,43 @@ def main() -> int:
         research_text = aggregate.build_research_text(dossier, cfg)
         (OUTPUT_DIR / f"research_{date_str}.txt").write_text(research_text, encoding="utf-8")
 
-        # 2) script
-        if args.reuse_script and (OUTPUT_DIR / f"script_{date_str}.json").exists():
-            script = _load_script(date_str)
-            log.info("reusing existing script (%d words)", script.total_words)
-        else:
-            script = generate_script.generate_script(cfg, window, research_text)
-            generate_script.save_script(script, date_str)
+        # 2) per-edition: script (+ audio). Both editions feed one publish step.
+        editions = cfg.get("editions", default=None) or [
+            {"id": "pl", "language": "pl", "prompt": "system_brief.md",
+             "apply_pronunciations": True, "title_prefix": ""}]
+        items = []
+        for ed in editions:
+            eid = ed.get("id", "pl")
+            if args.reuse_script and _script_json(date_str, eid).exists():
+                script = _load_script(date_str, eid)
+                log.info("[%s] reusing existing script (%d words)", eid, script.total_words)
+            else:
+                script = generate_script.generate_script(cfg, window, research_text, ed)
+                generate_script.save_script(script, date_str, eid)
+            log.info("[%s] script: \"%s\" | %d words (~%.1f min spoken)",
+                     eid, script.title, script.total_words, script.total_words / cfg.wpm)
+            if args.skip_audio:
+                continue
+            audio = synthesize.synthesize(cfg, script, date_str, ed)
+            items.append({"edition": ed, "script": script, "audio": audio})
 
-        est_min = script.total_words / cfg.wpm
-        log.info("script: \"%s\" | %d words (~%.1f min spoken)",
-                 script.title, script.total_words, est_min)
-
+        # 3) publish (both editions into one feed)
         if args.skip_audio:
-            log.info("done (audio skipped). Script at output/script_%s.txt", date_str)
+            log.info("done (audio skipped). Scripts in output/.")
             return 0
-
-        # 3) audio
-        audio = synthesize.synthesize(cfg, script, date_str)
-
-        # 4) publish
         if args.skip_publish:
-            log.info("done (publish skipped). MP3 at %s", audio["path"])
+            log.info("done (publish skipped). %d edition(s) synthesized.", len(items))
             return 0
-        result = publish.publish(cfg, audio, script, date_str)
+        result = publish.publish(cfg, items, date_str)
 
         log.info("=== DONE in %.0fs | mode=%s | episodes=%d ===",
                  time.time() - t0, result["mode"], result["episodes"])
         if result.get("feed_url"):
             log.info("RSS feed: %s", result["feed_url"])
-            log.info("Episode : %s", result["episode_url"])
-        if result.get("transcript_url"):
-            log.info("Transcript: %s", result["transcript_url"])
+        for it in result.get("items", []):
+            log.info("[%s] Episode: %s", it["edition"], it["episode_url"])
+            if it.get("transcript_url"):
+                log.info("[%s] Transcript: %s", it["edition"], it["transcript_url"])
         return 0
 
     except Exception as e:  # noqa: BLE001

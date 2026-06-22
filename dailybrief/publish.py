@@ -171,51 +171,53 @@ def _ensure_cover(cfg: Config, client, bucket: str, public_base: str,
 # --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
-def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
+def publish(cfg: Config, items: list[dict], date_str: str) -> dict[str, Any]:
+    """items: list of {"edition": dict, "script": BriefScript, "audio": dict}.
+    Each becomes one episode; all are published into a single feed."""
     pub = cfg.get("publish", default={})
     keep = int(pub.get("keep_episodes", 30))
     feed_name = pub.get("feed_filename", "feed.xml")
     bucket = cfg.env.get("R2_BUCKET", "daily-brief")
     public_base = (cfg.env.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
-
-    mp3_path: Path = audio["path"]
-    mp3_key = f"episodes/brief_{date_str}.mp3"
     client = _r2_client(cfg)
     use_r2 = bool(client and public_base)
+    mode = "r2" if use_r2 else "local"
+    if not use_r2:
+        log.warning("R2 not configured -> LOCAL mode (feed references local files)")
 
     episodes = _load_episodes(client if use_r2 else None, bucket)
-    episodes = [e for e in episodes if e["date"] != date_str]  # replace same-day
+    published: list[dict] = []
 
-    txt_key = f"episodes/brief_{date_str}.txt"
-    transcript_url = None
-    if client and public_base:
-        log.info("uploading MP3 to R2 (%s)...", mp3_key)
-        _r2_put(client, bucket, mp3_key, mp3_path.read_bytes(), "audio/mpeg")
-        ep_url = f"{public_base}/{mp3_key}"
-        mode = "r2"
-        # companion transcript (the Opus script) — handy for review / show notes
-        try:
-            _r2_put(client, bucket, txt_key,
-                    script.full_narration().encode("utf-8"), "text/plain; charset=utf-8")
-            transcript_url = f"{public_base}/{txt_key}"
-            log.info("transcript -> %s", transcript_url)
-        except Exception as e:  # noqa: BLE001
-            log.warning("transcript upload failed: %s", e)
-    else:
-        ep_url = mp3_path.resolve().as_uri()
-        mode = "local"
-        log.warning("R2 not configured -> LOCAL mode (feed will reference local file)")
+    for it in items:
+        ed, script, audio = it["edition"], it["script"], it["audio"]
+        eid = ed.get("id", "pl")
+        tag = "" if eid in ("", "pl") else f"_{eid}"
+        mp3_key = f"episodes/brief_{date_str}{tag}.mp3"
+        txt_key = f"episodes/brief_{date_str}{tag}.txt"
+        episodes = [e for e in episodes if e.get("mp3_key") != mp3_key]  # replace same item
 
-    episodes.append({
-        "date": date_str,
-        "title": f"{script.title} — {date_str}",
-        "summary": script.summary,
-        "mp3_key": mp3_key,
-        "url": ep_url,
-        "duration_s": audio.get("duration_s"),
-        "size_bytes": audio.get("size_bytes", 0),
-        "pubdate": datetime.now(timezone.utc).isoformat(),
-    })
+        transcript_url = None
+        if use_r2:
+            log.info("[%s] uploading MP3 to R2 (%s)...", eid, mp3_key)
+            _r2_put(client, bucket, mp3_key, audio["path"].read_bytes(), "audio/mpeg")
+            ep_url = f"{public_base}/{mp3_key}"
+            try:
+                _r2_put(client, bucket, txt_key,
+                        script.full_narration().encode("utf-8"), "text/plain; charset=utf-8")
+                transcript_url = f"{public_base}/{txt_key}"
+            except Exception as e:  # noqa: BLE001
+                log.warning("[%s] transcript upload failed: %s", eid, e)
+        else:
+            ep_url = audio["path"].resolve().as_uri()
+
+        episodes.append({
+            "date": date_str, "edition": eid,
+            "title": f"{ed.get('title_prefix', '')}{script.title} — {date_str}",
+            "summary": script.summary, "mp3_key": mp3_key, "url": ep_url,
+            "duration_s": audio.get("duration_s"), "size_bytes": audio.get("size_bytes", 0),
+            "pubdate": datetime.now(timezone.utc).isoformat(),
+        })
+        published.append({"edition": eid, "episode_url": ep_url, "transcript_url": transcript_url})
 
     # prune (drop the MP3 and its companion transcript)
     episodes.sort(key=lambda e: e["pubdate"])
@@ -224,7 +226,7 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
         if client and old.get("mp3_key"):
             _r2_delete(client, bucket, old["mp3_key"])
             _r2_delete(client, bucket, old["mp3_key"].rsplit(".", 1)[0] + ".txt")
-        log.info("pruned old episode %s", old["date"])
+        log.info("pruned old episode %s [%s]", old["date"], old.get("edition", ""))
 
     cover_url = _ensure_cover(cfg, client, bucket, public_base, use_r2)
     feed_bytes = _build_feed(cfg, episodes, public_base or OUTPUT_DIR.as_uri(), cover_url)
@@ -232,7 +234,7 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
     feed_local.write_bytes(feed_bytes)
 
     feed_url = None
-    if client and public_base:
+    if use_r2:
         _r2_put(client, bucket, feed_name, feed_bytes, "application/rss+xml")
         feed_url = f"{public_base}/{feed_name}"
         log.info("feed published -> %s", feed_url)
@@ -240,6 +242,5 @@ def publish(cfg: Config, audio: dict, script, date_str: str) -> dict[str, Any]:
         log.info("feed written locally -> %s", feed_local)
 
     _save_episodes(episodes, client if use_r2 else None, bucket)
-    return {"mode": mode, "episode_url": ep_url, "feed_url": feed_url,
-            "transcript_url": transcript_url, "feed_local": feed_local,
-            "episodes": len(episodes)}
+    return {"mode": mode, "feed_url": feed_url, "feed_local": feed_local,
+            "episodes": len(episodes), "items": published}

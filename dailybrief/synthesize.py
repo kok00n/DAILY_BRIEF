@@ -122,13 +122,18 @@ def _duration_seconds(path: Path) -> float | None:
         return None
 
 
-def synthesize(cfg: Config, script: BriefScript, date_str: str) -> dict:
-    voice = cfg.get("voice", "name", default="pl-PL-MarekNeural")
+def synthesize(cfg: Config, script: BriefScript, date_str: str,
+               edition: dict | None = None) -> dict:
+    edition = edition or {"id": "pl", "apply_pronunciations": True}
+    edition_id = edition.get("id", "pl")
     rate = cfg.get("voice", "rate", default="+0%")
     pitch = cfg.get("voice", "pitch", default="+0Hz")
-    pron = cfg.get("voice", "pronunciations", default={}) or {}
+    voice = edition.get("voice") or cfg.get("voice", "name", default="pl-PL-MarekNeural")
+    pron = (cfg.get("voice", "pronunciations", default={}) or {}) \
+        if edition.get("apply_pronunciations", True) else {}
 
-    parts_dir = OUTPUT_DIR / f"tts_parts_{date_str}"
+    tag = "" if edition_id in ("", "pl") else f"_{edition_id}"
+    parts_dir = OUTPUT_DIR / f"tts_parts_{date_str}{tag}"
     parts_dir.mkdir(parents=True, exist_ok=True)
     for old in parts_dir.glob("*.mp3"):
         old.unlink()
@@ -147,15 +152,15 @@ def synthesize(cfg: Config, script: BriefScript, date_str: str) -> dict:
     if not parts:
         raise RuntimeError("nothing to synthesize (empty script)")
 
-    log.info("synthesizing %d chunks with voice %s ...", len(parts), voice)
+    log.info("[%s] synthesizing %d chunks with voice %s ...", edition_id, len(parts), voice)
     t0 = time.time()
     part_paths = asyncio.run(_synth_all(parts, voice, rate, pitch, parts_dir))
 
-    out_mp3 = OUTPUT_DIR / f"brief_{date_str}.mp3"
+    out_mp3 = OUTPUT_DIR / f"brief_{date_str}{tag}.mp3"
     _concat(part_paths, out_mp3)
     dur = _duration_seconds(out_mp3)
     size_mb = out_mp3.stat().st_size / 1e6
-    log.info("audio ready: %s (%.1f MB, %s, %.0fs synth)",
-             out_mp3.name, size_mb,
+    log.info("[%s] audio ready: %s (%.1f MB, %s, %.0fs synth)",
+             edition_id, out_mp3.name, size_mb,
              f"{dur/60:.1f} min" if dur else "duration n/a", time.time() - t0)
     return {"path": out_mp3, "duration_s": dur, "size_bytes": out_mp3.stat().st_size}
