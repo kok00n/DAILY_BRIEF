@@ -181,6 +181,22 @@ voice:
   pitch: "+0Hz"
   # Audio format from edge-tts: 24kHz mono mp3 @ 48kbps -> ~14 MB for 40 min.
   silence_between_sections_ms: 700
+  # Phonetic respellings so the Polish voice approximates English jargon/tickers
+  # (edge-tts can't switch language). Left = matched whole-word, case-insensitive;
+  # right = how it should sound when read in Polish. Add/trim to taste.
+  pronunciations:
+    hawkish: "hołkisz"
+    dovish: "dowisz"
+    "higher for longer": "hajer for longer"
+    "risk-off": "risk of"
+    "risk-on": "risk on"
+    DXY: "di eks łaj"
+    VIX: "wiks"
+    steepener: "stipener"
+    flattener: "flatener"
+    carry: "keri"
+    FOMC: "ef o em si"
+    SOFR: "soufer"
 
 # Ordered sections. target_min drives length calibration and the prompt outline.
 # 'feeds' documents which collectors inform each section (used in the prompt).

@@ -80,6 +80,12 @@ long_text = ("Zdanie testowe numer jeden. " * 400)
 chunks = _split_sentences(long_text, max_chars=2800)
 check("long text chunked", len(chunks) > 1, f"{len(chunks)} chunks")
 check("chunks within limit", all(len(c) <= 2900 for c in chunks))
+pron = cfg.get("voice", "pronunciations", default={})
+spoken = clean_for_tts("Ton hawkish, DXY i VIX; risk-off, higher for longer.", pron)
+check("pronunciations applied (EN jargon respelled)",
+      "hołkisz" in spoken and "di eks łaj" in spoken and "wiks" in spoken
+      and "hajer for longer" in spoken, spoken)
+check("non-listed words untouched", "Ton" in spoken)
 
 print("== market formatting ==")
 fake = {

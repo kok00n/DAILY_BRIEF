@@ -26,10 +26,22 @@ MD_RE = re.compile(r"[#*_`>]+")
 MAX_CHARS = 2800
 
 
-def clean_for_tts(text: str) -> str:
+def _apply_pronunciations(text: str, mapping: dict[str, str]) -> str:
+    """Respell English jargon/tickers phonetically so the Polish voice approximates
+    English (edge-tts has no SSML, so a single-language voice reads everything in
+    Polish phonetics). e.g. 'hawkish' -> 'hołkisz', 'DXY' -> 'di eks łaj'."""
+    for term, say in mapping.items():
+        # match whole token, case-insensitive, not glued to other word chars
+        text = re.sub(rf"(?<!\w){re.escape(term)}(?!\w)", say, text, flags=re.IGNORECASE)
+    return text
+
+
+def clean_for_tts(text: str, pronunciations: dict[str, str] | None = None) -> str:
     text = MARKER_RE.sub("", text)
     text = MD_RE.sub("", text)
     text = re.sub(r"https?://\S+", "", text)
+    if pronunciations:
+        text = _apply_pronunciations(text, pronunciations)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
@@ -114,6 +126,7 @@ def synthesize(cfg: Config, script: BriefScript, date_str: str) -> dict:
     voice = cfg.get("voice", "name", default="pl-PL-MarekNeural")
     rate = cfg.get("voice", "rate", default="+0%")
     pitch = cfg.get("voice", "pitch", default="+0Hz")
+    pron = cfg.get("voice", "pronunciations", default={}) or {}
 
     parts_dir = OUTPUT_DIR / f"tts_parts_{date_str}"
     parts_dir.mkdir(parents=True, exist_ok=True)
@@ -124,7 +137,7 @@ def synthesize(cfg: Config, script: BriefScript, date_str: str) -> dict:
     parts: list[tuple[int, str]] = []
     idx = 0
     for sec in script.sections:
-        clean = clean_for_tts(sec["text"])
+        clean = clean_for_tts(sec["text"], pron)
         if not clean:
             continue
         for chunk in _split_sentences(clean):
