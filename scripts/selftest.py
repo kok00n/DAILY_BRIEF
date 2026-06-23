@@ -292,6 +292,18 @@ check("swap text: levels + slope + direction",
       "2s10s +34 bp" in _txt and "stromienie" in _txt and "10Y 4.39" in _txt, _txt)
 check("empty swaps -> empty text", sw.format_swaps_text({"curves": {}}) == "")
 
+print("== FX (ECB deterministic) ==")
+from dailybrief.collectors import fx_rates as fx  # noqa: E402
+_exr = fx._parse_exr_csv("KEY,TIME_PERIOD,OBS_VALUE\nA,2026-06-23,1.1480\nA,2026-06-24,1.1523\n")
+check("ECB EXR csv parsed", _exr == [("2026-06-23", 1.148), ("2026-06-24", 1.1523)], str(_exr))
+_ex = {"USD": 1.15, "PLN": 4.25, "JPY": 160.0, "GBP": 0.85, "CAD": 1.55, "SEK": 11.0, "CHF": 0.92}
+check("EUR/USD = ECB USD-per-EUR", fx._pair_value("EUR/USD", _ex) == 1.15)
+check("EUR/PLN = ECB PLN-per-EUR", fx._pair_value("EUR/PLN", _ex) == 4.25)
+check("USD/PLN derived (PLN/USD)", abs(fx._pair_value("USD/PLN", _ex) - 4.25 / 1.15) < 1e-9)
+check("USD/JPY derived (JPY/USD)", abs(fx._pair_value("USD/JPY", _ex) - 160.0 / 1.15) < 1e-9)
+_dxyv = fx._pair_value("DXY", _ex)
+check("DXY computed from basket (sane range)", 80 < _dxyv < 120, f"{_dxyv:.2f}")
+
 print("== cover art ==")
 from dailybrief import cover as coverm  # noqa: E402
 png = coverm.generate_cover("Poranny Brief", "Makro & Rates")

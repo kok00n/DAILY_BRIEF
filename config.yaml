@@ -399,9 +399,10 @@ calendar:
 #   CZ 10Y    : Stooq (daily, keyless) -> CNB ARAD (daily, free CNB_API_KEY)       -> FRED monthly
 #   HU 10Y    : Stooq (daily, keyless) -> MNB .xls (monthly, optional)             -> FRED monthly
 cee_yields:
-  stooq:                       # daily yield CSV — needs STOOQ_API_KEY (else datacenter IPs get an
-    hosts: ["stooq.pl", "stooq.com"]   # anti-bot HTML challenge). Tried in order; also tries 'y'-toggled symbol.
-    symbols: {PL: "10yply.b", CZ: "10yczy.b", HU: "10yhuy.b", DE: "10ydey.b"}
+  stooq:                       # DISABLED: Stooq's apikey CSV broke ~2026-06-05 (now serves an
+    enabled: false             # anti-bot JS challenge even with a valid key — confirmed: the user's
+    hosts: ["stooq.pl", "stooq.com"]   # own CETO Stooq feed went stale on the same date). Set true
+    symbols: {PL: "10yply.b", CZ: "10yczy.b", HU: "10yhuy.b", DE: "10ydey.b"}  # if Stooq restores CSV.
   bundesbank:                  # the actual German term-structure par yields
     base: "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
     series_10y: "D.I.ZAR.ZI.EUR.S1311.B.A604.R10XX.R.A.A._Z._Z.A"
@@ -439,6 +440,13 @@ swaps:
   tenors: ["2Y", "5Y", "10Y", "20Y", "30Y"]      # levels to report (missing ones skipped)
   slopes: [["2Y", "10Y"], ["5Y", "10Y"], ["2Y", "5Y"], ["10Y", "30Y"]]   # steepeners/flatteners
   max_stale_days: 7            # skip a curve whose latest stamp is older than this
+
+# Deterministic FX from the ECB Data Portal daily euro reference rates (no key).
+# USD crosses are derived and DXY is computed from the basket. ECB values override
+# the Yahoo markets.fx below by name (Yahoo stays as the per-pair fallback).
+fx:
+  enabled: true
+  pairs: ["EUR/USD", "USD/PLN", "EUR/PLN", "USD/JPY", "DXY"]
 
 # Market data universe. source: fred | yahoo | coingecko
 # Symbols are resilient — a failing symbol is logged and skipped, not fatal.

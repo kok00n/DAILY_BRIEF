@@ -14,15 +14,15 @@ collect → aggregate → generate script (Opus 4.8) → text-to-speech → publ
 ```
 
 1. **Dane rynkowe** (darmowe, deterministyczne i *datowane*): FRED (US: 2/5/10/30Y,
-   2s10s, SOFR, fed funds, breakevens, HY OAS), **Stooq** (dzienne 10Y PL/CZ/HU + DE,
-   keyless przez `stooq.pl`), **Bundesbank** (autorytatywny Bund 10Y + Schatz 2Y;
-   fallback **ECB**), Yahoo/yfinance (indeksy, FX, surowce, VIX, WIG/WIG20),
-   CoinGecko + Fear&Greed (krypto). **Stooq wymaga `STOOQ_API_KEY`** (bez niego
-   datacenterowe IP dostają anti-bot HTML zamiast CSV). Łańcuch CEE: Stooq → (CZ: CNB ARAD / HU: MNB) →
-   miesięczny anchor FRED/OECD. Dzienny odczyt liczy się tylko gdy świeży (≤7 dni) —
-   nieświeże liczby są jawnie oznaczane „dane miesięczne", nigdy nie udają dzisiejszych.
-   Dodatkowo **swap rates (IRS)** PLN/HUF/CZK/EUR z **BlueGamma** (publiczne API, bez
-   klucza) + policzone nachylenia krzywej (2s10s, 5s10s… → steepenery/flattenery).
+   2s10s, SOFR, fed funds, breakevens, HY OAS), **Bundesbank** (Bund 10Y + Schatz 2Y;
+   fallback **ECB**), **ECB** (FX: EUR/USD, USD/PLN, EUR/PLN, USD/JPY + DXY z koszyka —
+   Yahoo jako fallback), Yahoo/yfinance (indeksy, surowce, VIX, WIG/WIG20),
+   CoinGecko + Fear&Greed (krypto). Cash govie CEE (PL/CZ/HU): walidowany snapshot /
+   CNB ARAD → miesięczny anchor FRED/OECD; dzienny odczyt liczy się tylko gdy świeży
+   (≤7 dni), inaczej jawnie „dane miesięczne". *(Stooq wyłączony — apikey-owy CSV padł
+   ~2026-06-05.)* Dzienny obraz CEE-rates niesie głównie **swap rates (IRS)**
+   PLN/HUF/CZK/EUR z **BlueGamma** (publiczne API, bez klucza) + nachylenia krzywej
+   (2s10s, 5s10s… → steepenery/flattenery).
 2. **Kalendarz na dziś** (forward-looking): FairEconomy/ForexFactory (majors z
    godzinami, impactem, prognozą/poprzednią) + suplement CEE przez Perplexity
    (NBP/CNB/MNB + dzisiejsi mówcy Fed/ECB) — bo feed majors nie ma PL/CZ/HU.
@@ -45,12 +45,12 @@ Struktura odcinka i wszystkie parametry: [config.yaml](config.yaml).
 - **Python 3.11+** (masz 3.11.9 ✅)
 - Klucze API: `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`
 - Darmowy `FRED_API_KEY` — rejestracja 1 min: https://fredaccount.stlouisfed.org/apikeys
-- `STOOQ_API_KEY` — apikey ze Stooqa, **wymagany** do dziennych rentowności CEE
-  (PL/CZ/HU 10Y + DE) z IP datacenter; bez niego `stooq.pl` zwraca anti-bot HTML, nie
-  CSV. Pobierz z konta Stooq (apikey do eksportu CSV).
-- *(opcjonalny)* `CNB_API_KEY` — klucz CNB ARAD jako dodatkowy zapas dla czeskich 10Y
-  (uwaga: bieżący indikator dzienny bywa nieaktualizowany). Rejestracja:
-  https://www.cnb.cz/arad/ . Bez Stooqa i CNB → CZ schodzi do miesięcznego FRED/OECD.
+- `STOOQ_API_KEY` — *(nieaktywny)* Stooq jest wyłączony (`cee_yields.stooq.enabled: false`),
+  bo apikey-owy CSV padł ~2026-06-05 (anti-bot challenge). Sekret niepotrzebny, dopóki
+  Stooq nie przywróci CSV.
+- *(opcjonalny)* `CNB_API_KEY` — klucz CNB ARAD jako zapas dla czeskich 10Y (uwaga:
+  bieżący indikator dzienny bywa nieaktualizowany). Rejestracja: https://www.cnb.cz/arad/ .
+  Bez niego CZ schodzi do miesięcznego FRED/OECD.
 - Konto **Cloudflare** (darmowy R2) do hostingu MP3 + RSS
 - *(zalecane)* `ffmpeg` do czystego łączenia audio: `winget install Gyan.FFmpeg`
   (bez ffmpeg działa fallback — binarne łączenie MP3, też grywalne)
@@ -117,7 +117,7 @@ Workflow: [.github/workflows/daily-brief.yml](.github/workflows/daily-brief.yml)
    (`.env`, `output/`, MP3 są w `.gitignore` — nie trafią do repo.)
 2. Repo → **Settings → Secrets and variables → Actions → New repository secret** —
    dodaj każdy osobno: `ANTHROPIC_API_KEY`, `PERPLEXITY_API_KEY`, `XAI_API_KEY`,
-   `FRED_API_KEY`, `STOOQ_API_KEY`, `CNB_API_KEY` (opcjonalny), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+   `FRED_API_KEY`, `CNB_API_KEY` (opcjonalny), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
    `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_BASE_URL`.
 3. Repo → **Actions** → *Daily Brief* → **Run workflow** (ręczny test). Przy błędzie
    pobierz artefakt `brief-debug-*` (log + skrypt + research).
@@ -165,7 +165,7 @@ Ustaw auto-pobieranie nowych odcinków rano — telefon ściągnie brief sam.
 | Claude Opus 4.8 (skrypt ~40 min) | ~$1–2 |
 | Perplexity Sonar Pro (8 zapytań) | ~$0.05–0.20 |
 | xAI Grok (5 grup x_search + priority + web ≈ 8 wywołań) | ~$0.25–0.70 |
-| edge-tts, FRED, Stooq, Bundesbank, ECB, CNB, BlueGamma, Yahoo, CoinGecko | **darmowe** |
+| edge-tts, FRED, Bundesbank, ECB, CNB, BlueGamma, Yahoo, CoinGecko | **darmowe** |
 | Cloudflare R2 (10 GB free) | **darmowe** |
 
 Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
@@ -194,11 +194,13 @@ Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
 ## Troubleshooting
 
 - **„Missing/placeholder env var …"** — uzupełnij `.env`.
-- **Brak/nieaktualne rentowności CEE** — podstawowo PL/CZ/HU/DE leci ze Stooqa
-  (`stooq.pl`, wymaga `STOOQ_API_KEY`); DE ma autorytatywny Bundesbank na czele. Dzienny odczyt jest
-  przyjmowany tylko gdy świeży (≤7 dni), inaczej schodzimy do miesięcznego anchora
-  FRED/OECD (jawnie „dane miesięczne"). Symbole/hosty/serie/progi: blok `cee_yields`
+- **Brak/nieaktualne rentowności CEE** — DE z Bundesbanku (fallback ECB), cash govie
+  PL/CZ/HU z walidowanego snapshotu/CNB → miesięcznego FRED/OECD (Stooq wyłączony,
+  padł ~2026-06-05). Dzienny odczyt tylko gdy świeży (≤7 dni). Dzienny obraz CEE
+  niesie krzywa swapowa (BlueGamma). Strojenie: bloki `cee_yields` / `swaps` / `fx`
   w `config.yaml`.
+- **FX** — domyślnie deterministycznie z **ECB** (EUR/USD, USD/PLN, EUR/PLN, USD/JPY,
+  DXY z koszyka); gdy ECB zawiedzie dla danej pary, używany jest fallback z Yahoo.
 - **Audio „skacze" na złączeniach** — zainstaluj ffmpeg (czyste łączenie).
 - **edge-tts błąd / throttling** — uruchamiasz za często; bieg dzienny jest OK.
 - **Zadanie nie odpala przy uśpionym PC** — w zadaniu jest `-WakeToRun`, ale

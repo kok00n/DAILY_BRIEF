@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import calendar as _cal
 import csv
-import hashlib
 import io
 import logging
 import os
@@ -580,14 +579,15 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     max_dev = float(sanity.get("snapshot_max_dev_pp", SNAPSHOT_MAX_DEV))
     stq = sc.get("stooq", {}) or {}
     stq_hosts = stq.get("hosts") or ["stooq.pl", "stooq.com"]
-    stq_syms = stq.get("symbols") or {"PL": "10yply.b", "CZ": "10yczy.b",
-                                      "HU": "10yhuy.b", "DE": "10ydey.b"}
-    _sk = os.environ.get("STOOQ_API_KEY", "").strip()
-    if _sk and not _sk.endswith("..."):
-        _fp = hashlib.sha256(_sk.encode()).hexdigest()[:8]
-        log.info("stooq apikey: present (len %d, sha256:%s)", len(_sk), _fp)
+    stq_syms = (stq.get("symbols") or {"PL": "10yply.b", "CZ": "10yczy.b",
+                                       "HU": "10yhuy.b", "DE": "10ydey.b"}) \
+        if stq.get("enabled", True) else {}
+    if stq_syms:
+        _sk = os.environ.get("STOOQ_API_KEY", "").strip()
+        log.info("stooq: enabled, apikey %s",
+                 "present" if (_sk and not _sk.endswith("...")) else "MISSING")
     else:
-        log.info("stooq apikey: MISSING/placeholder")
+        log.info("stooq: disabled (apikey CSV broke ~2026-06-05) — CEE daily via snapshot/CNB, else monthly")
 
     # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
     fred_key = cfg.env.get("FRED_API_KEY", "")

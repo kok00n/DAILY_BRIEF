@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from .collectors import (cee_yields, econ_calendar, market_data,
+from .collectors import (cee_yields, econ_calendar, fx_rates, market_data,
                          news_perplexity, social_grok, swap_rates)
 from .config import Config
 from .util import LookbackWindow, OUTPUT_DIR, polish_date_phrase
@@ -26,19 +26,21 @@ def collect_all(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
             log.error("collector '%s' failed entirely: %s", name, e)
             return {"error": str(e)}
 
-    with ThreadPoolExecutor(max_workers=6) as ex:
+    with ThreadPoolExecutor(max_workers=7) as ex:
         f_market = ex.submit(safe, market_data.collect_market_data, "market")
         f_news = ex.submit(safe, news_perplexity.collect_news, "news")
         f_social = ex.submit(safe, social_grok.collect_social, "social")
         f_cal = ex.submit(safe, econ_calendar.collect_calendar, "calendar")
         f_cee = ex.submit(safe, cee_yields.collect_cee_yields, "cee_yields")
         f_swaps = ex.submit(safe, swap_rates.collect_swaps, "swaps")
+        f_fx = ex.submit(safe, fx_rates.collect_fx, "fx_rates")
         market = f_market.result()
         news = f_news.result()
         social = f_social.result()
         calendar = f_cal.result()
         cee = f_cee.result()
         swaps = f_swaps.result()
+        fxr = f_fx.result()
 
     # CEE + Bund yields come from a dedicated source (scrape + Perplexity); fold
     # them into the right market tables (PL/CZ/HU -> rates_cee, Bund -> rates_cores).
@@ -49,6 +51,20 @@ def collect_all(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
             market["rates_cee"] = cee_q
         if core_q:
             market["rates_cores"] = (market.get("rates_cores") or []) + core_q
+
+    # ECB FX (deterministic, dated) overrides Yahoo fx by name; Yahoo stays as the
+    # per-pair fallback for any pair ECB couldn't supply.
+    if isinstance(market, dict) and fxr.get("quotes"):
+        ecb_by = {q["name"]: q for q in fxr["quotes"] if q.get("ok")}
+        if ecb_by:
+            merged, seen = [], set()
+            for q in market.get("fx", []) or []:
+                merged.append(ecb_by.get(q["name"], q))
+                seen.add(q["name"])
+            for name, q in ecb_by.items():
+                if name not in seen:
+                    merged.append(q)
+            market["fx"] = merged
 
     dossier = {
         "generated_for": window.now.isoformat(),
