@@ -47,6 +47,12 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
 }
 
+# Stooq's anti-bot serves a JS challenge to BROWSER-like clients but plain CSV to
+# simple ones — so use a minimal, non-browser UA here. This matches how plain
+# requests / pandas / curl pull it (which work, incl. from GitHub Actions); a full
+# Chrome fingerprint triggers the challenge and we get HTML instead of CSV.
+STOOQ_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*"}
+
 BUNDESBANK_BASE = "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
 # Bundesbank term-structure par yields (annual coupon) — only the maturity token
 # differs: R10XX (10Y) vs R02XX (2Y). JSON avoids the German decimal-comma CSV.
@@ -302,8 +308,9 @@ def _parse_mnb_sheet(sheet, header_row: int, val_col: int) -> list[tuple[str, fl
 # --------------------------------------------------------------------------- #
 # Network fetchers (best-effort; raise on failure, caller catches)
 # --------------------------------------------------------------------------- #
-def _get(url: str, params: dict | None = None, timeout: int = HTTP_TIMEOUT) -> requests.Response:
-    r = requests.get(url, params=params, headers=BROWSER_HEADERS, timeout=timeout)
+def _get(url: str, params: dict | None = None, timeout: int = HTTP_TIMEOUT,
+         headers: dict | None = None) -> requests.Response:
+    r = requests.get(url, params=params, headers=headers or BROWSER_HEADERS, timeout=timeout)
     r.raise_for_status()
     return r
 
@@ -360,7 +367,8 @@ def _stooq(symbol: str, hosts: list[str]) -> list[tuple[str, float]]:
         for cand in _stooq_candidates(symbol):
             try:
                 pairs = _parse_stooq_csv(_get(f"https://{host}/q/d/l/",
-                                              {"s": cand, "i": "d"}).text)
+                                              {"s": cand, "i": "d"},
+                                              headers=STOOQ_HEADERS).text)
                 if pairs:
                     if host != hosts[0] or cand != symbol:
                         log.info("stooq: '%s' via %s/'%s'", symbol, host, cand)
