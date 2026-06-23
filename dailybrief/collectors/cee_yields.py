@@ -364,7 +364,7 @@ def _fred_monthly(series: str, api_key: str = "") -> list[tuple[str, float]]:
 def _stooq(symbol: str, hosts: list[str]) -> list[tuple[str, float]]:
     """Daily CSV. Needs &apikey=... (STOOQ_API_KEY) — without it datacenter IPs get
     an anti-bot HTML challenge instead of CSV. Tries hosts in order + both spellings."""
-    apikey = os.environ.get("STOOQ_API_KEY", "")
+    apikey = os.environ.get("STOOQ_API_KEY", "").strip()
     if apikey.endswith("..."):
         apikey = ""
     last_err: Exception | None = None
@@ -578,6 +578,9 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     stq_hosts = stq.get("hosts") or ["stooq.pl", "stooq.com"]
     stq_syms = stq.get("symbols") or {"PL": "10yply.b", "CZ": "10yczy.b",
                                       "HU": "10yhuy.b", "DE": "10ydey.b"}
+    _sk = os.environ.get("STOOQ_API_KEY", "").strip()
+    log.info("stooq apikey: %s", f"present (len {len(_sk)})"
+             if _sk and not _sk.endswith("...") else "MISSING/placeholder")
 
     # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
     fred_key = cfg.env.get("FRED_API_KEY", "")
