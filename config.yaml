@@ -402,10 +402,10 @@ cee_yields:
   cbonds:                      # PRIMARY daily cash-govie: 10Y YTM scraped from cbonds.pl index pages
     enabled: true              # (value is server-rendered; _get's Chrome UA passes cbonds' Cloudflare WAF).
     base: "https://cbonds.pl/indexes"   # collector validates the page's country before trusting the value
-    indexes:                   # cbonds index id per country & tenor (10Y now; 5Y feeds ASW)
-      PL: {"10Y": 24283}
-      CZ: {"10Y": 24225}
-      HU: {"10Y": 24239}
+    indexes:                   # cbonds index id per country & tenor (5Y feeds ASW)
+      PL: {"10Y": 24283, "5Y": 162497}
+      CZ: {"10Y": 24225, "5Y": 162139}
+      HU: {"10Y": 24239}       # HU 5Y YTM id unconfirmed (~162229-162239) — add when verified
   stooq:                       # DISABLED: Stooq's apikey CSV broke ~2026-06-05 (now serves an
     enabled: false             # anti-bot JS challenge even with a valid key — confirmed: the user's
     hosts: ["stooq.pl", "stooq.com"]   # own CETO Stooq feed went stale on the same date). Set true
