@@ -28,6 +28,7 @@ import calendar as _cal
 import csv
 import io
 import logging
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -47,11 +48,10 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9,pl;q=0.8",
 }
 
-# Stooq's anti-bot serves a JS challenge to BROWSER-like clients but plain CSV to
-# simple ones — so use a minimal, non-browser UA here. This matches how plain
-# requests / pandas / curl pull it (which work, incl. from GitHub Actions); a full
-# Chrome fingerprint triggers the challenge and we get HTML instead of CSV.
-STOOQ_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*"}
+# Stooq returns an anti-bot HTML challenge (not CSV) to datacenter IPs UNLESS the
+# request carries a valid &apikey=... (from STOOQ_API_KEY). With the key it serves
+# the CSV directly; the UA is incidental. (Confirmed against a working setup.)
+STOOQ_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; DailyBrief/1.0)", "Accept": "text/csv,*/*"}
 
 BUNDESBANK_BASE = "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
 # Bundesbank term-structure par yields (annual coupon) — only the maturity token
@@ -362,14 +362,19 @@ def _fred_monthly(series: str, api_key: str = "") -> list[tuple[str, float]]:
 
 
 def _stooq(symbol: str, hosts: list[str]) -> list[tuple[str, float]]:
-    """Keyless daily CSV. stooq.pl serves it; stooq.com tends to 'Access denied'
-    from some IPs — try hosts in order, and both symbol spellings."""
+    """Daily CSV. Needs &apikey=... (STOOQ_API_KEY) — without it datacenter IPs get
+    an anti-bot HTML challenge instead of CSV. Tries hosts in order + both spellings."""
+    apikey = os.environ.get("STOOQ_API_KEY", "")
+    if apikey.endswith("..."):
+        apikey = ""
     last_err: Exception | None = None
     for host in hosts:
         for cand in _stooq_candidates(symbol):
             try:
-                pairs = _parse_stooq_csv(_get(f"https://{host}/q/d/l/",
-                                              {"s": cand, "i": "d"},
+                params = {"s": cand, "i": "d"}
+                if apikey:
+                    params["apikey"] = apikey
+                pairs = _parse_stooq_csv(_get(f"https://{host}/q/d/l/", params,
                                               headers=STOOQ_HEADERS).text)
                 if pairs:
                     if host != hosts[0] or cand != symbol:

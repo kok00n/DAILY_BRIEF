@@ -399,8 +399,8 @@ calendar:
 #   CZ 10Y    : Stooq (daily, keyless) -> CNB ARAD (daily, free CNB_API_KEY)       -> FRED monthly
 #   HU 10Y    : Stooq (daily, keyless) -> MNB .xls (monthly, optional)             -> FRED monthly
 cee_yields:
-  stooq:                       # keyless daily CSV; stooq.pl serves it (stooq.com often denies).
-    hosts: ["stooq.pl", "stooq.com"]   # tried in order; collector also tries the 'y'-toggled symbol
+  stooq:                       # daily yield CSV — needs STOOQ_API_KEY (else datacenter IPs get an
+    hosts: ["stooq.pl", "stooq.com"]   # anti-bot HTML challenge). Tried in order; also tries 'y'-toggled symbol.
     symbols: {PL: "10yply.b", CZ: "10yczy.b", HU: "10yhuy.b", DE: "10ydey.b"}
   bundesbank:                  # the actual German term-structure par yields
     base: "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
