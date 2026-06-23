@@ -249,6 +249,22 @@ except ValueError:
     _denied_ok = True
 check("Stooq 'Access denied' rejected (not parsed as data)", _denied_ok)
 
+print("== cbonds index parse (PL/CZ/HU 10Y YTM) ==")
+_cb_html = ('x var indexInfo = {"country_id":{"id":1,"lbl":"Polska"},'
+            '"description":"Yield to maturity on 10-year Government Bonds of Poland",'
+            '"actual_value":"5,44","actual_value.numeric":5.44,"actual_date":"2026-06-23",'
+            '"prev_value":"5,42","prev_value.numeric":5.422,"prev_date":"2026-06-22"}; y')
+_cbp = cy._parse_cbonds(_cb_html)
+check("cbonds parsed (prev+actual, dot-decimal)",
+      _cbp == [("2026-06-22", 5.422), ("2026-06-23", 5.44)], str(_cbp))
+_cbd, _cbv, _cbpv = cy._last_two(_cbp)
+check("cbonds latest + change_bp",
+      (_cbd, _cbv, cy._change_bp(_cbv, _cbpv)) == ("2026-06-23", 5.44, 2),
+      f"{_cbd} {_cbv} {cy._change_bp(_cbv, _cbpv)}")
+check("cbonds comma-decimal fallback (no .numeric)",
+      cy._parse_cbonds('var x = {"actual_value":"4,29","actual_date":"2026-06-23"};')
+      == [("2026-06-23", 4.29)])
+
 print("== PL snapshot parse (hardened) ==")
 check("PL dated line", cy._parse_pl_line("PL=5.74,+3,2026-06-19") == (5.74, 3, "2026-06-19"))
 check("PL change-only line", cy._parse_pl_line("PL=5.74,-2") == (5.74, -2, None))

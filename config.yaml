@@ -399,6 +399,10 @@ calendar:
 #   CZ 10Y    : Stooq (daily, keyless) -> CNB ARAD (daily, free CNB_API_KEY)       -> FRED monthly
 #   HU 10Y    : Stooq (daily, keyless) -> MNB .xls (monthly, optional)             -> FRED monthly
 cee_yields:
+  cbonds:                      # PRIMARY daily cash-govie: 10Y YTM scraped from cbonds.pl index pages
+    enabled: true              # (value is server-rendered; _get's Chrome UA passes cbonds' Cloudflare WAF).
+    base: "https://cbonds.pl/indexes"   # collector validates the page's country before trusting the value
+    indexes: {PL: 24283, CZ: 24225, HU: 24239}   # cbonds index id per country (10Y YTM)
   stooq:                       # DISABLED: Stooq's apikey CSV broke ~2026-06-05 (now serves an
     enabled: false             # anti-bot JS challenge even with a valid key — confirmed: the user's
     hosts: ["stooq.pl", "stooq.com"]   # own CETO Stooq feed went stale on the same date). Set true

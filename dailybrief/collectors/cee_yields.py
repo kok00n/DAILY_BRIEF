@@ -390,6 +390,58 @@ def _stooq(symbol: str, hosts: list[str]) -> list[tuple[str, float]]:
     return []
 
 
+def _cbonds_num(html: str, key: str) -> float | None:
+    m = re.search(rf'"{re.escape(key)}\.numeric"\s*:\s*([0-9.]+)', html)
+    if m:
+        return float(m.group(1))
+    m = re.search(rf'"{re.escape(key)}"\s*:\s*"(\d+),(\d+)"', html)  # Polish comma-decimal
+    if m:
+        return float(f"{m.group(1)}.{m.group(2)}")
+    return None
+
+
+def _cbonds_date(html: str, key: str) -> str | None:
+    m = re.search(rf'"{re.escape(key)}"\s*:\s*"(\d{{4}}-\d{{2}}-\d{{2}})"', html)
+    return m.group(1) if m else None
+
+
+def _parse_cbonds(html: str) -> list[tuple[str, float]]:
+    """Pull the embedded indexInfo actual/prev value+date from a cbonds index page."""
+    out: list[tuple[str, float]] = []
+    pv, pd = _cbonds_num(html, "prev_value"), _cbonds_date(html, "prev_date")
+    if pv is not None and pd:
+        out.append((pd, pv))
+    av, ad = _cbonds_num(html, "actual_value"), _cbonds_date(html, "actual_date")
+    if av is not None and ad:
+        out.append((ad, av))
+    out.sort()
+    return out
+
+
+_CBONDS_EXPECT = {
+    "PL": ("Poland", "Polska"), "CZ": ("Czech", "Czechy"),
+    "HU": ("Hungary", "Węgry"), "DE": ("Germany", "Niemcy"),
+    "US": ("United States", "Treasur", "UST"),
+}
+
+
+def _cbonds(index_id, base: str = "https://cbonds.pl/indexes",
+            expect: tuple[str, ...] | None = None) -> list[tuple[str, float]]:
+    """cbonds index page — 10Y govbond YTM. The value is server-rendered in an inline
+    `indexInfo` JSON (no JS/login). cbonds' Cloudflare WAF 403s bot UAs but serves it
+    to a browser UA — and _get already sends a full Chrome UA (BROWSER_HEADERS).
+    `expect` guards against a wrong index id: the page's description/country must
+    contain one of the expected country tokens, else we refuse the value."""
+    html = _get(f"{base.rstrip('/')}/{index_id}/").text
+    if expect:
+        m = re.search(r'"description"\s*:\s*"([^"]*)"', html)
+        mc = re.search(r'"country_id"\s*:\s*\{[^}]*"lbl"\s*:\s*"([^"]*)"', html)
+        hay = f"{m.group(1) if m else ''} {mc.group(1) if mc else ''}".lower()
+        if not any(tok.lower() in hay for tok in expect):
+            raise ValueError(f"index {index_id}: country mismatch (expected {expect}, got '{hay.strip()}')")
+    return _parse_cbonds(html)
+
+
 def _mnb_xls(url: str, header_row: int, val_col: int) -> list[tuple[str, float]]:
     content = _get(url).content
     try:
@@ -472,6 +524,21 @@ def _try_stooq(name: str, cat: str, symbol: str | None, hosts: list[str],
     return None
 
 
+def _try_cbonds(name: str, cat: str, index_id, base: str, lo: float, hi: float,
+                window: LookbackWindow, sources: list[str], tag: str) -> dict[str, Any] | None:
+    if not index_id:
+        return None
+    try:
+        pairs = _cbonds(index_id, base, _CBONDS_EXPECT.get(tag))
+        q = _daily_quote(name, cat, "cbonds", pairs, lo, hi, window)
+        if q:
+            sources.append(f"{tag}:cbonds")
+            return q
+    except Exception as e:  # noqa: BLE001
+        log.info("%s cbonds failed: %s", tag, e)
+    return None
+
+
 def _resolve_de(name: str, tag: str, bb_series: str | None, ecb_series: str | None,
                 base: str, sym: str | None, hosts: list[str],
                 anchor: tuple[str, float] | None, lo: float, hi: float,
@@ -499,9 +566,13 @@ def _resolve_de(name: str, tag: str, bb_series: str | None, ecb_series: str | No
     return _anchor_quote(name, anchor, "cores", sources, tag)
 
 
-def _resolve_cz(name: str, cfg: Config, sc: dict, sym: str | None, hosts: list[str],
+def _resolve_cz(name: str, cfg: Config, sc: dict, cb_base: str, cb_id,
+                sym: str | None, hosts: list[str],
                 anchor: tuple[str, float] | None, lo: float, hi: float,
                 window: LookbackWindow, sources: list[str]) -> dict[str, Any]:
+    q = _try_cbonds(name, "cee", cb_id, cb_base, lo, hi, window, sources, "CZ")
+    if q:
+        return q
     q = _try_stooq(name, "cee", sym, hosts, lo, hi, window, sources, "CZ")
     if q:
         return q
@@ -521,9 +592,12 @@ def _resolve_cz(name: str, cfg: Config, sc: dict, sym: str | None, hosts: list[s
     return _anchor_quote(name, anchor, "cee", sources, "CZ")
 
 
-def _resolve_hu(name: str, sc: dict, sym: str | None, hosts: list[str],
+def _resolve_hu(name: str, sc: dict, cb_base: str, cb_id, sym: str | None, hosts: list[str],
                 anchor: tuple[str, float] | None, lo: float, hi: float,
                 window: LookbackWindow, sources: list[str]) -> dict[str, Any]:
+    q = _try_cbonds(name, "cee", cb_id, cb_base, lo, hi, window, sources, "HU")
+    if q:
+        return q
     q = _try_stooq(name, "cee", sym, hosts, lo, hi, window, sources, "HU")
     if q:
         return q
@@ -540,15 +614,18 @@ def _resolve_hu(name: str, sc: dict, sym: str | None, hosts: list[str],
     return _anchor_quote(name, anchor, "cee", sources, "HU")
 
 
-def _resolve_pl(name: str, cfg: Config, sym: str | None, hosts: list[str],
+def _resolve_pl(name: str, cfg: Config, cb_base: str, cb_id, sym: str | None, hosts: list[str],
                 anchor: tuple[str, float] | None, lo: float, hi: float,
                 max_dev: float, window: LookbackWindow,
                 sources: list[str]) -> dict[str, Any]:
-    # 1) Stooq daily CSV (keyless; stooq.pl) — the user's proven path
+    # 1) cbonds daily YTM (server-rendered) — primary cash-govie source
+    q = _try_cbonds(name, "cee", cb_id, cb_base, lo, hi, window, sources, "PL")
+    if q:
+        return q
+    # 2) Stooq (disabled by default) -> 3) validated snapshot -> 4) monthly anchor
     q = _try_stooq(name, "cee", sym, hosts, lo, hi, window, sources, "PL")
     if q:
         return q
-    # 2) hardened snapshot (validated against the anchor) -> 3) monthly anchor
     snap = _pl_snapshot(cfg)
     if snap:
         v, chg, d = snap
@@ -587,7 +664,10 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
         log.info("stooq: enabled, apikey %s",
                  "present" if (_sk and not _sk.endswith("...")) else "MISSING")
     else:
-        log.info("stooq: disabled (apikey CSV broke ~2026-06-05) — CEE daily via snapshot/CNB, else monthly")
+        log.info("stooq: disabled (apikey CSV broke ~2026-06-05) — CEE daily via cbonds/snapshot/CNB, else monthly")
+    cb = sc.get("cbonds", {}) or {}
+    cb_base = cb.get("base", "https://cbonds.pl/indexes")
+    cb_idx = (cb.get("indexes") or {}) if cb.get("enabled", True) else {}
 
     # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
     fred_key = cfg.env.get("FRED_API_KEY", "")
@@ -606,11 +686,11 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
                     stq_hosts, anchors.get("DE"), lo, hi, window, sources),
         _resolve_de("DE 2Y (Schatz)", "DE2", bb_2y, ecb_2y, base, None,
                     stq_hosts, None, lo, hi, window, sources),   # no 2Y monthly anchor
-        _resolve_pl("PL 10Y", cfg, stq_syms.get("PL"), stq_hosts,
+        _resolve_pl("PL 10Y", cfg, cb_base, cb_idx.get("PL"), stq_syms.get("PL"), stq_hosts,
                     anchors.get("PL"), lo, hi, max_dev, window, sources),
-        _resolve_cz("CZ 10Y", cfg, sc, stq_syms.get("CZ"), stq_hosts,
+        _resolve_cz("CZ 10Y", cfg, sc, cb_base, cb_idx.get("CZ"), stq_syms.get("CZ"), stq_hosts,
                     anchors.get("CZ"), lo, hi, window, sources),
-        _resolve_hu("HU 10Y", sc, stq_syms.get("HU"), stq_hosts,
+        _resolve_hu("HU 10Y", sc, cb_base, cb_idx.get("HU"), stq_syms.get("HU"), stq_hosts,
                     anchors.get("HU"), lo, hi, window, sources),
     ]
 
