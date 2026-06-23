@@ -26,7 +26,9 @@ concurrency:
 jobs:
   brief:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # bilingual dialogue: 2x Opus script (~6 min) + 2x edge-tts (~6 min, slower under
+    # throttling) + collect + publish. 25 min was too tight (cancelled mid EN TTS).
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 

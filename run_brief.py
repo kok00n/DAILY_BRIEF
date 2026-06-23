@@ -139,18 +139,22 @@ def main() -> int:
         items = []
         for ed in editions:
             eid = ed.get("id", "pl")
-            if args.reuse_script and _script_json(date_str, eid).exists():
-                script = _load_script(date_str, eid)
-                log.info("[%s] reusing existing script (%d words)", eid, script.total_words)
-            else:
-                script = generate_script.generate_script(cfg, window, research_text, ed)
-                generate_script.save_script(script, date_str, eid)
-            log.info("[%s] script: \"%s\" | %d words (~%.1f min spoken)",
-                     eid, script.title, script.total_words, script.total_words / cfg.wpm)
-            if args.skip_audio:
-                continue
-            audio = synthesize.synthesize(cfg, script, date_str, ed)
-            items.append({"edition": ed, "script": script, "audio": audio})
+            try:
+                if args.reuse_script and _script_json(date_str, eid).exists():
+                    script = _load_script(date_str, eid)
+                    log.info("[%s] reusing existing script (%d words)", eid, script.total_words)
+                else:
+                    script = generate_script.generate_script(cfg, window, research_text, ed)
+                    generate_script.save_script(script, date_str, eid)
+                log.info("[%s] script: \"%s\" | %d words (~%.1f min spoken)",
+                         eid, script.title, script.total_words, script.total_words / cfg.wpm)
+                if args.skip_audio:
+                    continue
+                audio = synthesize.synthesize(cfg, script, date_str, ed)
+                items.append({"edition": ed, "script": script, "audio": audio})
+            except Exception as e:  # noqa: BLE001
+                # one edition failing must not lose the others — publish what succeeded
+                log.error("[%s] edition failed (%s); skipping it", eid, e)
 
         # 3) publish (both editions into one feed)
         if args.skip_audio:
