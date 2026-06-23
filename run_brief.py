@@ -63,6 +63,17 @@ def _log_data_check(log, dossier: dict) -> None:
         lvls = ", ".join(f"{t} {p['rate']:.2f}%" for t, p in lv.items())
         slps = ", ".join(f"{s['name']} {'+' if s['bp'] >= 0 else ''}{s['bp']}bp" for s in c.get("slopes") or [])
         log.info("  %-4s [stan %s] %s | %s", ccy, c.get("asof"), lvls, slps)
+    from dailybrief.collectors import swap_rates as _swr
+    asw = _swr.compute_asw((m.get("rates_cee") or []) + (m.get("rates_cores") or []), sw_curves)
+    if asw:
+        _by: dict = {}
+        for a in asw:
+            _by.setdefault(a["country"], []).append(a)
+        log.info("%-12s govie-swap, bp:", "ASW")
+        for _c, _items in _by.items():
+            log.info("  %-4s %s", _c, ", ".join(
+                f"{a['tenor']} {'+' if a['bp'] >= 0 else ''}{a['bp']}bp"
+                for a in sorted(_items, key=lambda x: int(x['tenor'][:-1]))))
     for e in (m.get("errors") or [])[:12]:
         log.info("  market error: %s", e)
     for key in ("news", "social", "calendar"):
