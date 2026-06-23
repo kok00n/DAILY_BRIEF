@@ -45,8 +45,15 @@ tue = datetime(2026, 6, 16, 6, 0, tzinfo=ZoneInfo(tz))   # a Tuesday
 wmon = compute_window(tz, True, reference=mon)
 wtue = compute_window(tz, True, reference=tue)
 check("monday -> weekend lookback", wmon.is_monday_after_weekend)
-check("monday recency=week", wmon.perplexity_recency == "week")
-check("tuesday -> 24h", not wtue.is_monday_after_weekend and wtue.perplexity_recency == "day")
+check("monday -> 48h lookback", wmon.lookback_hours == 48
+      and abs((wmon.now - wmon.start).total_seconds() - 48 * 3600) < 1)
+check("tuesday -> 24h lookback", not wtue.is_monday_after_weekend and wtue.lookback_hours == 24
+      and abs((wtue.now - wtue.start).total_seconds() - 24 * 3600) < 1)
+from dailybrief.collectors.news_perplexity import _time_filter  # noqa: E402
+check("Perplexity Tue-Fri -> 24h recency", _time_filter(wtue) == {"search_recency_filter": "day"})
+check("Perplexity Mon -> 48h after-date (no recency)",
+      "search_after_date_filter" in _time_filter(wmon)
+      and "search_recency_filter" not in _time_filter(wmon), str(_time_filter(wmon)))
 check("polish date phrase", "czerwca 2026" in polish_date_phrase(mon),
       polish_date_phrase(mon))
 
@@ -192,9 +199,9 @@ check("crypto allowlist incl. coindesk", bool(df_crypto) and "coindesk.com" in d
 check("ai_tech allowlist incl. arxiv", bool(df_ai) and "arxiv.org" in df_ai)
 check("all domain filters <= 20",
       all(len(x) <= 20 for x in (df_cee, df_rates, df_crypto, df_ai)))
-check("ai_tech recency override = week", npx._recency(cfg, "ai_tech", win_today) == "week")
-check("rates recency inherits window default",
-      npx._recency(cfg, "rates", win_today) == win_today.perplexity_recency)
+check("perplexity time filter is window-based, one filter only",
+      npx._time_filter(win_today) in ({"search_recency_filter": "day"},
+                                      {"search_after_date_filter": win_today.from_date_us}))
 check("sources from search_results",
       npx._extract_sources({"search_results": [{"title": "T", "url": "http://u"}]}) == ["T — http://u"])
 check("sources fallback to citations",

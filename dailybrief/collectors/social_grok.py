@@ -138,7 +138,7 @@ def collect_social(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     groups = _topic_groups(cfg)
     priority = cfg.get("grok", "priority_handles", default=[]) or []
     frm, to = window.from_date_iso, window.now.date().isoformat()
-    win = "the weekend (since Friday)" if window.is_monday_after_weekend else "the last 24 hours"
+    win = "the last 48 hours (the weekend)" if window.is_monday_after_weekend else "the last 24 hours"
 
     web_prompt = (
         f"Find the most insightful analytical macro/rates writing and market commentary "

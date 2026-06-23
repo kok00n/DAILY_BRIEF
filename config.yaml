@@ -22,7 +22,9 @@ claude:
 perplexity:
   model: "sonar-pro"
   max_tokens_per_query: 1100
-  search_recency_filter: "day"  # overridden to "week" automatically on Monday
+  # Time window is enforced in code: Tue–Fri = 24h recency; Monday = 48h after-date
+  # (covers the weekend). See dailybrief/util.py compute_window + collectors.
+  search_recency_filter: "day"
 
 # News-quality controls for Perplexity (search_domain_filter: max 20 per query,
 # allowlist OR denylist — not both).
@@ -91,9 +93,6 @@ news:
       - deepmind.google
       - bloomberg.com
       - reuters.com
-  # Per-topic recency override (otherwise day, or week on Mondays).
-  recency_overrides:
-    ai_tech: week
 
 grok:
   model: "grok-4.3"

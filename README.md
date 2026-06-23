@@ -190,8 +190,10 @@ Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
 - `grok.enable_image_understanding` — Grok czyta wykresy/tabele w postach;
   `grok.dedup_topics_from_priority` — tematy pomijają core (czyste odkrywanie)
 - `news.deny_domains` (globalny denylist) + `news.allow_domains.{cee,crypto,ai_tech}`
-  (allowlisty jakościowych źródeł per temat) — sterowanie jakością Perplexity;
-  `news.recency_overrides`
+  (allowlisty jakościowych źródeł per temat) — sterowanie jakością Perplexity
+- **Okno czasu Perplexity/Groka**: wt–pt = ostatnie **24h**, poniedziałek = **48h**
+  (weekend). Sterowane w `dailybrief/util.py` (`compute_window`); Perplexity w pon.
+  używa `search_after_date_filter` (brak kubełka 48h), Grok dostaje `from_date`
 - `calendar.min_impact` / `calendar.cee_supplement` — zakres agendy na dziś
 - `markets.*` — uniwersum symboli (źle działający symbol jest pomijany, nie wywala biegu)
 

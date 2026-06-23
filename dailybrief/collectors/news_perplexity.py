@@ -70,9 +70,14 @@ QUERIES: dict[str, str] = {
 }
 
 
-def _recency(cfg: Config, topic: str, window: LookbackWindow) -> str:
-    overrides = cfg.get("news", "recency_overrides", default={}) or {}
-    return overrides.get(topic) or window.perplexity_recency
+def _time_filter(window: LookbackWindow) -> dict:
+    """Constrain search to the lookback window: 24h on Tue–Fri, 48h on Monday.
+    Perplexity has no 48h recency bucket, so Monday uses search_after_date_filter
+    (date of now-48h); Tue–Fri use the 'day' recency (~24h). The two filters
+    cannot be combined."""
+    if window.is_monday_after_weekend:
+        return {"search_after_date_filter": window.from_date_us}
+    return {"search_recency_filter": "day"}
 
 
 def _domain_filter(cfg: Config, topic: str) -> list[str] | None:
@@ -149,19 +154,19 @@ def _query(topic: str, prompt: str, cfg: Config, window: LookbackWindow,
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     # NB: Perplexity rejects search_recency_filter + search_after_date_filter together,
-    # so we use recency only (day / week-on-Mondays) plus the domain filter.
-    full = dict(base, search_recency_filter=_recency(cfg, topic, window))
+    # so _time_filter returns exactly one of them (24h recency / 48h after-date).
+    tf = _time_filter(window)
+    full = dict(base, **tf)
     dom = _domain_filter(cfg, topic)
     if dom:
         full["search_domain_filter"] = dom
     try:
         data = _post(full, headers)
     except Exception as e:  # noqa: BLE001
-        # auto-degrade: drop the optional search params (the likely culprit of a 400)
+        # auto-degrade: drop the domain filter (the likely culprit of a 400), keep the window
         log.warning("perplexity '%s' full request failed (%s); retrying minimal body",
                     topic, e)
-        minimal = dict(base, search_recency_filter=_recency(cfg, topic, window))
-        data = _post(minimal, headers)
+        data = _post(dict(base, **tf), headers)
 
     content = data["choices"][0]["message"]["content"]
     return {"topic": topic, "text": content.strip(), "citations": _extract_sources(data)}
@@ -169,7 +174,7 @@ def _query(topic: str, prompt: str, cfg: Config, window: LookbackWindow,
 
 def collect_news(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     api_key = cfg.require_env("PERPLEXITY_API_KEY")
-    win_phrase = "weekend (since Friday)" if window.is_monday_after_weekend else "24 hours"
+    win_phrase = "48 hours (the weekend)" if window.is_monday_after_weekend else "24 hours"
     results: dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {

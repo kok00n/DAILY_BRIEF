@@ -65,8 +65,10 @@ class LookbackWindow:
         return self.start.strftime("%m/%d/%Y")
 
     @property
-    def perplexity_recency(self) -> str:
-        return "week" if self.is_monday_after_weekend else "day"
+    def lookback_hours(self) -> int:
+        """How far back the news/social (LLM) collectors should look: 24h on
+        Tue–Fri, 48h on Monday (to cover the weekend)."""
+        return 48 if self.is_monday_after_weekend else 24
 
 
 def compute_window(tz_name: str, weekend_lookback: bool = True,
@@ -75,13 +77,10 @@ def compute_window(tz_name: str, weekend_lookback: bool = True,
     tz = ZoneInfo(tz_name)
     now = (reference or datetime.now(tz)).astimezone(tz)
     is_monday = now.weekday() == 0 and weekend_lookback
-    if is_monday:
-        # back to Friday same time (3 days)
-        start = now - timedelta(days=3)
-        label = "weekendu i ostatniej sesji piątkowej"
-    else:
-        start = now - timedelta(hours=24)
-        label = "ostatnich 24 godzin"
+    # weekdays (Tue–Fri) look back 24h; Monday looks back 48h (covers the weekend)
+    hours = 48 if is_monday else 24
+    start = now - timedelta(hours=hours)
+    label = "ostatnich 48 godzin (weekend)" if is_monday else "ostatnich 24 godzin"
     return LookbackWindow(now=now, start=start,
                           is_monday_after_weekend=is_monday, label_pl=label)
 

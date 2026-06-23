@@ -141,7 +141,7 @@ def _stream_text(client: anthropic.Anthropic, attempts: int = 6, **kwargs) -> st
 
 def _user_message(window: LookbackWindow, research_text: str, lang: str = "pl") -> str:
     if lang == "en":
-        win = ("the weekend (since Friday)" if window.is_monday_after_weekend
+        win = ("the last 48 hours (the weekend)" if window.is_monday_after_weekend
                else "the last 24 hours")
         return (
             f"Today is {window.now.strftime('%A, %d %B %Y')}. Prepare a brief covering "
