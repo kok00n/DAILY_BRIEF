@@ -82,7 +82,7 @@ def _split_sentences(text: str, max_chars: int = MAX_CHARS) -> list[str]:
 
 
 async def _synth_chunk(text: str, voice: str, rate: str, pitch: str,
-                       out_path: Path, attempts: int = 3) -> None:
+                       out_path: Path, attempts: int = 5) -> None:
     last = None
     for i in range(1, attempts + 1):
         try:
@@ -94,18 +94,31 @@ async def _synth_chunk(text: str, voice: str, rate: str, pitch: str,
         except Exception as e:  # noqa: BLE001
             last = e
             log.warning("tts chunk attempt %d/%d failed: %s", i, attempts, e)
-            await asyncio.sleep(2 * i)
+            if i < attempts:
+                await asyncio.sleep(min(20, 3 * i))   # 3,6,9,12s — ride out throttling
     raise RuntimeError(f"TTS failed after {attempts} attempts: {last}")
 
 
 async def _synth_all(parts: list[tuple[int, str, str]], rate: str,
                      pitch: str, parts_dir: Path) -> list[Path]:
     out_paths: list[Path] = []
+    skipped = 0
     # sequential to stay gentle on the free endpoint (avoid throttling/blocks)
     for idx, text, voice in parts:
+        if not re.search(r"\w", text):      # nothing speakable -> skip silently
+            continue
         p = parts_dir / f"part_{idx:03d}.mp3"
-        await _synth_chunk(text, voice, rate, pitch, p)
-        out_paths.append(p)
+        try:
+            await _synth_chunk(text, voice, rate, pitch, p)
+            out_paths.append(p)
+        except Exception as e:  # noqa: BLE001
+            skipped += 1
+            # one stubborn chunk must NOT sink the whole (already-paid-for) episode
+            log.warning("tts: skipping chunk %d after retries (%s)", idx, e)
+    if skipped:
+        log.warning("tts: %d/%d chunks skipped; synthesised %d", skipped, len(parts), len(out_paths))
+    if not out_paths:
+        raise RuntimeError("TTS produced no audio (every chunk failed)")
     return out_paths
 
 
