@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import calendar as _cal
 import csv
+import hashlib
 import io
 import logging
 import os
@@ -582,8 +583,11 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     stq_syms = stq.get("symbols") or {"PL": "10yply.b", "CZ": "10yczy.b",
                                       "HU": "10yhuy.b", "DE": "10ydey.b"}
     _sk = os.environ.get("STOOQ_API_KEY", "").strip()
-    log.info("stooq apikey: %s", f"present (len {len(_sk)})"
-             if _sk and not _sk.endswith("...") else "MISSING/placeholder")
+    if _sk and not _sk.endswith("..."):
+        _fp = hashlib.sha256(_sk.encode()).hexdigest()[:8]
+        log.info("stooq apikey: present (len %d, sha256:%s)", len(_sk), _fp)
+    else:
+        log.info("stooq apikey: MISSING/placeholder")
 
     # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
     fred_key = cfg.env.get("FRED_API_KEY", "")
