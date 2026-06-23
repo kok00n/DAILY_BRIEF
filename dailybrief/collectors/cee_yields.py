@@ -51,7 +51,7 @@ BROWSER_HEADERS = {
 # Stooq returns an anti-bot HTML challenge (not CSV) to datacenter IPs UNLESS the
 # request carries a valid &apikey=... (from STOOQ_API_KEY). With the key it serves
 # the CSV directly; the UA is incidental. (Confirmed against a working setup.)
-STOOQ_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; DailyBrief/1.0)", "Accept": "text/csv,*/*"}
+STOOQ_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; DailyBrief/1.0)"}  # UA-only, like CETO
 
 BUNDESBANK_BASE = "https://api.statistiken.bundesbank.de/rest/data/BBSIS"
 # Bundesbank term-structure par yields (annual coupon) — only the maturity token
@@ -371,11 +371,14 @@ def _stooq(symbol: str, hosts: list[str]) -> list[tuple[str, float]]:
     for host in hosts:
         for cand in _stooq_candidates(symbol):
             try:
-                params = {"s": cand, "i": "d"}
+                # build the URL inline (raw apikey, no param re-encoding) + a UA-only
+                # header — byte-for-byte like the known-working CETO_DOWNLOADER call
+                url = f"https://{host}/q/d/l/?s={cand}&i=d"
                 if apikey:
-                    params["apikey"] = apikey
-                pairs = _parse_stooq_csv(_get(f"https://{host}/q/d/l/", params,
-                                              headers=STOOQ_HEADERS).text)
+                    url += f"&apikey={apikey}"
+                r = requests.get(url, headers=STOOQ_HEADERS, timeout=HTTP_TIMEOUT)
+                r.raise_for_status()
+                pairs = _parse_stooq_csv(r.text)
                 if pairs:
                     if host != hosts[0] or cand != symbol:
                         log.info("stooq: '%s' via %s/'%s'", symbol, host, cand)
