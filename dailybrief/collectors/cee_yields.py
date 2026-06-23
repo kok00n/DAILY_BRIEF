@@ -223,29 +223,31 @@ def _stooq_candidates(symbol: str) -> list[str]:
 
 
 def _parse_stooq_csv(text: str) -> list[tuple[str, float]]:
-    """Daily CSV (Date,Open,High,Low,Close,Volume). Close = the yield. Tolerates
-    an English or Polish header and reads Close positionally (column index 4)."""
+    """Daily CSV (Date,Open,High,Low,Close,Volume); Close = the yield. Tolerant of
+    an English or Polish header, a comma OR semicolon delimiter, and a decimal
+    comma (stooq.pl locale). Reads Close positionally (column index 4). Raises on a
+    non-CSV/blocked body (with a snippet) so the caller can log it and fall through."""
     text = text.strip()
-    head = text[:80].lower()
-    if not text or "access denied" in head or "n/d" in text[:40].lower():
-        raise ValueError(f"no CSV: {text[:60]!r}")
+    head = text[:120].lower()
+    if not text or text[0] == "<" or "access denied" in head or "n/d" in text[:40].lower():
+        raise ValueError(f"non-CSV/blocked: {text[:120]!r}")
+    first = text.splitlines()[0]
+    delim = ";" if first.count(";") > first.count(",") else ","
     out: list[tuple[str, float]] = []
-    rows = list(csv.reader(io.StringIO(text)))
-    if not rows:
-        return []
-    start = 1 if rows[0] and rows[0][0].strip().lower() in ("date", "data") else 0
+    rows = list(csv.reader(io.StringIO(text), delimiter=delim))
+    start = 1 if rows and rows[0] and rows[0][0].strip().lower() in ("date", "data") else 0
     for row in rows[start:]:
         if len(row) < 5:
             continue
-        d, close = row[0].strip(), row[4].strip()
+        d, close = row[0].strip(), row[4].strip().replace(",", ".")
         if not re.match(r"\d{4}-\d{2}-\d{2}$", d):
             continue
         try:
             out.append((d, float(close)))
         except ValueError:
             continue
-    if not out:  # HTML challenge / block page / empty -> surface it, don't silently skip
-        raise ValueError(f"no CSV rows (blocked/non-CSV?): {text[:60]!r}")
+    if not out:
+        raise ValueError(f"no CSV rows (cols/format?): {text[:120]!r}")
     out.sort()
     return out
 
@@ -458,7 +460,7 @@ def _try_stooq(name: str, cat: str, symbol: str | None, hosts: list[str],
             sources.append(f"{tag}:stooq")
             return q
     except Exception as e:  # noqa: BLE001
-        log.info("%s Stooq failed (%s)", tag, type(e).__name__)
+        log.info("%s Stooq failed: %s", tag, e)   # full message reveals the actual body
     return None
 
 
