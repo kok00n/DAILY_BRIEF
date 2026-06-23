@@ -238,6 +238,8 @@ def _parse_stooq_csv(text: str) -> list[tuple[str, float]]:
             out.append((d, float(close)))
         except ValueError:
             continue
+    if not out:  # HTML challenge / block page / empty -> surface it, don't silently skip
+        raise ValueError(f"no CSV rows (blocked/non-CSV?): {text[:60]!r}")
     out.sort()
     return out
 
@@ -326,7 +328,26 @@ def _cnb(indicator: str, api_key: str, months_before: int = 2) -> list[tuple[str
     return _parse_cnb_csv(r.text)
 
 
-def _fred_monthly(series: str) -> list[tuple[str, float]]:
+def _fred_monthly(series: str, api_key: str = "") -> list[tuple[str, float]]:
+    """Monthly OECD long-term rate. Prefer the FRED API (api.stlouisfed.org, needs
+    the key) — fast and reachable from datacenter IPs. The keyless fredgraph.csv
+    host (fred.stlouisfed.org) tends to TIME OUT from GitHub runners, so it's only
+    a last resort."""
+    if api_key and not api_key.endswith("..."):
+        r = _get("https://api.stlouisfed.org/fred/series/observations",
+                 {"series_id": series, "api_key": api_key, "file_type": "json",
+                  "sort_order": "desc", "limit": 6})
+        out: list[tuple[str, float]] = []
+        for o in r.json().get("observations", []):
+            v = o.get("value")
+            if v in (".", "", None):
+                continue
+            try:
+                out.append((o["date"], float(v)))
+            except (ValueError, KeyError):
+                continue
+        out.sort()
+        return out
     r = _get("https://fred.stlouisfed.org/graph/fredgraph.csv", {"id": series})
     return _parse_fred_csv(r.text)
 
@@ -470,11 +491,13 @@ def _resolve_cz(name: str, cfg: Config, sc: dict, sym: str | None, hosts: list[s
     indicator = sc.get("cnb_indicator_10y") or CNB_INDICATOR_10Y
     if key and not key.endswith("...") and indicator:
         try:
-            q = _daily_quote(name, "cee", "cnb arad", _cnb(indicator, key), lo, hi, window)
+            pairs = _cnb(indicator, key)
+            q = _daily_quote(name, "cee", "cnb arad", pairs, lo, hi, window)
             if q:
                 sources.append("CZ:cnb")
                 return q
-            log.info("CZ CNB returned no usable value — falling back to monthly")
+            log.info("CZ CNB no usable value (rows=%d, last=%s) — falling back to monthly",
+                     len(pairs), pairs[-1] if pairs else None)
         except Exception as e:  # noqa: BLE001
             log.info("CZ CNB failed (%s) — falling back to monthly", type(e).__name__)
     return _anchor_quote(name, anchor, "cee", sources, "CZ")
@@ -542,10 +565,11 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
                                       "HU": "10yhuy.b", "DE": "10ydey.b"}
 
     # Deterministic monthly anchors (also the sanity reference for the PL snapshot).
+    fred_key = cfg.env.get("FRED_API_KEY", "")
     anchors: dict[str, tuple[str, float]] = {}
     for k, sid in fred_map.items():
         try:
-            pairs = _fred_monthly(sid)
+            pairs = _fred_monthly(sid, fred_key)
             if pairs:
                 anchors[k] = (pairs[-1][0], pairs[-1][1])
         except Exception as e:  # noqa: BLE001
