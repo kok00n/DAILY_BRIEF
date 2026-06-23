@@ -539,6 +539,33 @@ def _try_cbonds(name: str, cat: str, index_id, base: str, lo: float, hi: float,
     return None
 
 
+def _tenor_years(t: str) -> int:
+    m = re.match(r"(\d+)", str(t))
+    return int(m.group(1)) if m else 99
+
+
+def _ccy_tenors(cb_idx: dict, ccy: str) -> dict:
+    """cbonds index ids for a country: {tenor: id}. Tolerates a flat int (= 10Y)."""
+    v = cb_idx.get(ccy)
+    if isinstance(v, dict):
+        return v
+    return {"10Y": v} if v else {}
+
+
+def _extra_cbonds(ccy: str, tenors: dict, cb_base: str, lo: float, hi: float,
+                  window: LookbackWindow, sources: list[str]) -> list[dict[str, Any]]:
+    """cbonds quotes for every NON-10Y tenor (e.g. 5Y) of a country — cbonds-only
+    (no monthly fallback; these mainly feed ASW)."""
+    out: list[dict[str, Any]] = []
+    for tenor in sorted(tenors, key=_tenor_years):
+        if tenor == "10Y":
+            continue
+        q = _try_cbonds(f"{ccy} {tenor}", "cee", tenors[tenor], cb_base, lo, hi, window, sources, ccy)
+        if q:
+            out.append(q)
+    return out
+
+
 def _resolve_de(name: str, tag: str, bb_series: str | None, ecb_series: str | None,
                 base: str, sym: str | None, hosts: list[str],
                 anchor: tuple[str, float] | None, lo: float, hi: float,
@@ -680,18 +707,22 @@ def collect_cee_yields(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
         except Exception as e:  # noqa: BLE001
             log.info("FRED anchor %s (%s) failed: %s", k, sid, type(e).__name__)
 
+    pl_t, cz_t, hu_t = (_ccy_tenors(cb_idx, c) for c in ("PL", "CZ", "HU"))
     sources: list[str] = []
     quotes = [
         _resolve_de("DE 10Y (Bund)", "DE10", bb_10y, ecb_10y, base, stq_syms.get("DE"),
                     stq_hosts, anchors.get("DE"), lo, hi, window, sources),
         _resolve_de("DE 2Y (Schatz)", "DE2", bb_2y, ecb_2y, base, None,
                     stq_hosts, None, lo, hi, window, sources),   # no 2Y monthly anchor
-        _resolve_pl("PL 10Y", cfg, cb_base, cb_idx.get("PL"), stq_syms.get("PL"), stq_hosts,
+        _resolve_pl("PL 10Y", cfg, cb_base, pl_t.get("10Y"), stq_syms.get("PL"), stq_hosts,
                     anchors.get("PL"), lo, hi, max_dev, window, sources),
-        _resolve_cz("CZ 10Y", cfg, sc, cb_base, cb_idx.get("CZ"), stq_syms.get("CZ"), stq_hosts,
+        *_extra_cbonds("PL", pl_t, cb_base, lo, hi, window, sources),
+        _resolve_cz("CZ 10Y", cfg, sc, cb_base, cz_t.get("10Y"), stq_syms.get("CZ"), stq_hosts,
                     anchors.get("CZ"), lo, hi, window, sources),
-        _resolve_hu("HU 10Y", sc, cb_base, cb_idx.get("HU"), stq_syms.get("HU"), stq_hosts,
+        *_extra_cbonds("CZ", cz_t, cb_base, lo, hi, window, sources),
+        _resolve_hu("HU 10Y", sc, cb_base, hu_t.get("10Y"), stq_syms.get("HU"), stq_hosts,
                     anchors.get("HU"), lo, hi, window, sources),
+        *_extra_cbonds("HU", hu_t, cb_base, lo, hi, window, sources),
     ]
 
     ok = sum(1 for q in quotes if q["ok"])

@@ -14,6 +14,7 @@ data_timestamp, and we skip a curve whose latest stamp is stale.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -168,3 +169,56 @@ def format_swaps_text(data: dict | None) -> str:
                 sparts.append(f"{s['name']} {_bp(s['bp'])}{tag}")
             lines.append("    nachylenia: " + " · ".join(sparts))
     return "\n".join(lines).strip()
+
+
+# --------------------------------------------------------------------------- #
+# ASW / swap spreads: govbond yield (cbonds) minus the matched swap (BlueGamma)
+# --------------------------------------------------------------------------- #
+ASW_CCY = {"PL": "PLN", "CZ": "CZK", "HU": "HUF", "DE": "EUR"}   # bond country -> swap ccy
+ASW_TENORS = ["5Y", "10Y"]
+ASW_LABEL = {"PL": "PL vs PLN swap", "CZ": "CZ vs CZK swap",
+             "HU": "HU vs HUF swap", "DE": "Bund vs EUR swap"}
+_NAME_RE = re.compile(r"^([A-Z]{2})\s+(\d+Y)")
+
+
+def compute_asw(govie_quotes: list[dict] | None, swaps_curves: dict | None,
+                ccy_map: dict | None = None, tenors: list[str] | None = None) -> list[dict]:
+    """ASW (bp) per (country, tenor) = govbond YTM (cbonds) − matched-tenor swap rate
+    (BlueGamma). Positive => bond yields above the swap. Daily change in bp too."""
+    ccy_map = ccy_map or ASW_CCY
+    tenors = tenors or ASW_TENORS
+    g: dict[tuple[str, str], dict] = {}
+    for q in govie_quotes or []:
+        if not q.get("ok") or not q.get("is_yield"):
+            continue
+        m = _NAME_RE.match(q.get("name", ""))
+        if m:
+            g[(m.group(1), m.group(2))] = q
+    out: list[dict] = []
+    for country, sccy in ccy_map.items():
+        levels = ((swaps_curves or {}).get(sccy) or {}).get("levels") or {}
+        for tenor in tenors:
+            gq, sw = g.get((country, tenor)), levels.get(tenor)
+            if not gq or gq.get("value") is None or not sw or sw.get("rate") is None:
+                continue
+            bp = round((gq["value"] - sw["rate"]) * 100)
+            gchg, schg = gq.get("change_bp"), sw.get("chg_pp")
+            chg = round(gchg - schg * 100) if (gchg is not None and schg is not None) else None
+            out.append({"country": country, "ccy": sccy, "tenor": tenor, "bp": bp, "chg_bp": chg})
+    return out
+
+
+def format_asw_text(asw: list[dict] | None) -> str:
+    if not asw:
+        return ""
+    by: dict[str, list] = {}
+    for a in asw:
+        by.setdefault(a["country"], []).append(a)
+    lines = ["ASW / swap-spready (rentowność obligacji minus swap, bp; + = obligacja rentowniej od swapa):"]
+    for country, items in by.items():
+        parts = []
+        for a in sorted(items, key=lambda x: int(x["tenor"][:-1])):
+            ch = f", dziś {_bp(a['chg_bp'])}" if a.get("chg_bp") is not None else ""
+            parts.append(f"{a['tenor']} {_bp(a['bp'])}{ch}")
+        lines.append(f"  {ASW_LABEL.get(country, country)}: " + " · ".join(parts))
+    return "\n".join(lines)

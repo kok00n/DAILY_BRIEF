@@ -97,6 +97,12 @@ def build_research_text(dossier: dict, cfg: Config) -> str:
     if swaps_txt:
         parts.append("\n===== SWAPY IRS (krzywe + nachylenia) =====")
         parts.append(swaps_txt)
+    asw = swap_rates.compute_asw((market.get("rates_cee") or []) + (market.get("rates_cores") or []),
+                                 (dossier.get("swaps") or {}).get("curves") or {})
+    asw_txt = swap_rates.format_asw_text(asw)
+    if asw_txt:
+        parts.append("\n===== ASW / SWAP-SPREADY (govie minus swap) =====")
+        parts.append(asw_txt)
     parts.append("\n===== KALENDARZ NA DZIŚ (forward-looking) =====")
     parts.append(econ_calendar.format_calendar_text(calendar) or "(brak kalendarza)")
     parts.append("\n===== NEWSY (Perplexity, ostatnie okno) =====")

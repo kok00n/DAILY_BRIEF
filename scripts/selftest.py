@@ -308,6 +308,23 @@ check("swap text: levels + slope + direction",
       "2s10s +34 bp" in _txt and "stromienie" in _txt and "10Y 4.39" in _txt, _txt)
 check("empty swaps -> empty text", sw.format_swaps_text({"curves": {}}) == "")
 
+print("== ASW (cbonds govie - BlueGamma swap) ==")
+_gov = [
+    {"name": "PL 10Y", "value": 5.44, "change_bp": 2, "is_yield": True, "ok": True},
+    {"name": "PL 5Y", "value": 4.80, "change_bp": 1, "is_yield": True, "ok": True},
+]
+_cur = {"PLN": {"levels": {"5Y": {"rate": 4.50, "chg_pp": -0.01},
+                           "10Y": {"rate": 4.39, "chg_pp": -0.03}}}}
+_asw = sw.compute_asw(_gov, _cur)
+_a10 = next(a for a in _asw if a["tenor"] == "10Y")
+_a5 = next(a for a in _asw if a["tenor"] == "5Y")
+check("ASW 10Y level (govie minus swap, bp)", _a10["bp"] == 105, str(_a10))
+check("ASW 10Y daily change (2 - (-3))", _a10["chg_bp"] == 5, str(_a10))
+check("ASW 5Y level", _a5["bp"] == 30, str(_a5))
+_aswtxt = sw.format_asw_text(_asw)
+check("ASW text: level + swap ccy", "10Y +105 bp" in _aswtxt and "PLN swap" in _aswtxt, _aswtxt)
+check("empty ASW -> empty text", sw.format_asw_text([]) == "")
+
 print("== FX (ECB deterministic) ==")
 from dailybrief.collectors import fx_rates as fx  # noqa: E402
 _exr = fx._parse_exr_csv("KEY,TIME_PERIOD,OBS_VALUE\nA,2026-06-23,1.1480\nA,2026-06-24,1.1523\n")
