@@ -20,6 +20,8 @@ collect → aggregate → generate script (Opus 4.8) → text-to-speech → publ
    CoinGecko + Fear&Greed (krypto). Łańcuch CEE: Stooq → (CZ: CNB ARAD / HU: MNB) →
    miesięczny anchor FRED/OECD. Dzienny odczyt liczy się tylko gdy świeży (≤7 dni) —
    nieświeże liczby są jawnie oznaczane „dane miesięczne", nigdy nie udają dzisiejszych.
+   Dodatkowo **swap rates (IRS)** PLN/HUF/CZK/EUR z **BlueGamma** (publiczne API, bez
+   klucza) + policzone nachylenia krzywej (2s10s, 5s10s… → steepenery/flattenery).
 2. **Kalendarz na dziś** (forward-looking): FairEconomy/ForexFactory (majors z
    godzinami, impactem, prognozą/poprzednią) + suplement CEE przez Perplexity
    (NBP/CNB/MNB + dzisiejsi mówcy Fed/ECB) — bo feed majors nie ma PL/CZ/HU.
@@ -160,7 +162,7 @@ Ustaw auto-pobieranie nowych odcinków rano — telefon ściągnie brief sam.
 | Claude Opus 4.8 (skrypt ~40 min) | ~$1–2 |
 | Perplexity Sonar Pro (8 zapytań) | ~$0.05–0.20 |
 | xAI Grok (5 grup x_search + priority + web ≈ 8 wywołań) | ~$0.25–0.70 |
-| edge-tts, FRED, Stooq, Bundesbank, ECB, CNB, Yahoo, CoinGecko | **darmowe** |
+| edge-tts, FRED, Stooq, Bundesbank, ECB, CNB, BlueGamma, Yahoo, CoinGecko | **darmowe** |
 | Cloudflare R2 (10 GB free) | **darmowe** |
 
 Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na

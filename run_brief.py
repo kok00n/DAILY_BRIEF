@@ -54,6 +54,15 @@ def _log_data_check(log, dossier: dict) -> None:
     cee = dossier.get("cee_yields", {}) or {}
     if cee.get("via"):
         log.info("  cee/bund providers: %s", cee["via"])
+    sw = dossier.get("swaps", {}) or {}
+    sw_curves = sw.get("curves") or {}
+    log.info("%-12s %d curves ok%s", "swaps (IRS)", len(sw_curves),
+             f" — {sw['via']}" if sw.get("via") else "")
+    for ccy, c in sw_curves.items():
+        lv = c.get("levels") or {}
+        lvls = ", ".join(f"{t} {p['rate']:.2f}%" for t, p in lv.items())
+        slps = ", ".join(f"{s['name']} {'+' if s['bp'] >= 0 else ''}{s['bp']}bp" for s in c.get("slopes") or [])
+        log.info("  %-4s [stan %s] %s | %s", ccy, c.get("asof"), lvls, slps)
     for e in (m.get("errors") or [])[:12]:
         log.info("  market error: %s", e)
     for key in ("news", "social", "calendar"):

@@ -272,6 +272,26 @@ check("daily quote not flagged", "dane miesięczne" not in _fmt_quote(dq)
 check("quote schema matches market_data (cat/freshness/is_yield)",
       mq["cat"] == "cee" and dq["cat"] == "cores" and mq["is_yield"] and dq["ok"])
 
+print("== swap rates (IRS, BlueGamma) ==")
+from dailybrief.collectors import swap_rates as sw  # noqa: E402
+_rows = [
+    {"tenor": "2Y", "rate": 4.0568, "change": -0.063, "data_timestamp": "2026-06-22T13:00:00", "currency": "PLN"},
+    {"tenor": "5Y", "rate": 4.1370, "change": -0.050, "data_timestamp": "2026-06-22T13:00:00", "currency": "PLN"},
+    {"tenor": "10Y", "rate": 4.3935, "change": -0.030, "data_timestamp": "2026-06-22T13:00:00", "currency": "PLN"},
+]
+_pts, _asof = sw._parse_curve(_rows)
+check("swap curve parsed (asof date + rate)", _asof == "2026-06-22" and _pts["10Y"]["rate"] == 4.3935,
+      f"{_asof} {_pts.get('10Y')}")
+_sl = sw._slopes(_pts, [["2Y", "10Y"], ["5Y", "10Y"]])
+_s210 = next(s for s in _sl if s["name"] == "2s10s")
+check("2s10s level (bp)", _s210["bp"] == 34, str(_s210))
+check("2s10s daily change = steepening +3bp", _s210["chg_bp"] == 3, str(_s210))
+_txt = sw.format_swaps_text({"curves": {"PLN": {"index": "6M WIBOR", "asof": "2026-06-22",
+        "levels": _pts, "slopes": _sl}}})
+check("swap text: levels + slope + direction",
+      "2s10s +34 bp" in _txt and "stromienie" in _txt and "10Y 4.39" in _txt, _txt)
+check("empty swaps -> empty text", sw.format_swaps_text({"curves": {}}) == "")
+
 print("== cover art ==")
 from dailybrief import cover as coverm  # noqa: E402
 png = coverm.generate_cover("Poranny Brief", "Makro & Rates")

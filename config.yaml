@@ -424,6 +424,22 @@ cee_yields:
     max: 25.0
     snapshot_max_dev_pp: 1.5   # reject a PL snapshot deviating >1.5pp from the anchor
 
+# Interest-rate SWAP (IRS) curves from BlueGamma's public API (no key, datacenter-OK).
+# Deterministic, dated par-swap mids per tenor + computed curve slopes (2s10s, 5s10s…
+# in bp, tagged stromienie/spłaszczanie) so the brief can discuss steepeners/flatteners
+# and set the swap curve against cash govies. Snapshot ~13:00 (EURIBOR intraday).
+swaps:
+  enabled: true
+  endpoint: "https://2vqt1h8xmd.execute-api.eu-west-2.amazonaws.com/public/get_index_name_all_swap_rates"
+  curves:                      # index_name per currency (not the ccy code)
+    - {ccy: PLN, index: "6M WIBOR"}
+    - {ccy: HUF, index: "6M BUBOR"}
+    - {ccy: CZK, index: "6M PRIBOR"}
+    - {ccy: EUR, index: "6M EURIBOR"}    # or "ESTR" for the EUR OIS curve (2D–60Y)
+  tenors: ["2Y", "5Y", "10Y", "20Y", "30Y"]      # levels to report (missing ones skipped)
+  slopes: [["2Y", "10Y"], ["5Y", "10Y"], ["2Y", "5Y"], ["10Y", "30Y"]]   # steepeners/flatteners
+  max_stale_days: 7            # skip a curve whose latest stamp is older than this
+
 # Market data universe. source: fred | yahoo | coingecko
 # Symbols are resilient — a failing symbol is logged and skipped, not fatal.
 markets:
