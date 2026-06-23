@@ -176,20 +176,27 @@ grok:
     - iggnacy            # Ignacy Morawski — PL macro economist (Puls Biznesu)
 
 # Two daily editions from the SAME research: Polish + English. Each runs its own
-# script generation (own prompt + language) and its own TTS voice; both episodes
-# are published into one feed. Add/remove editions freely.
+# script generation and TTS; both episodes go into one feed. Add/remove freely.
+# format: monologue | dialogue (toggle). dialogue = two analysts (A/B turns) read by
+# two voices (voices.A / voices.B); uses dialogue_prompt. monologue = one voice + prompt.
 editions:
   - id: pl
     language: pl
-    prompt: system_brief.md
-    voice: pl-PL-MarekNeural
-    apply_pronunciations: true      # phonetic respelling of EN jargon (PL voice)
+    format: dialogue
+    prompt: system_brief.md          # used in monologue mode
+    dialogue_prompt: system_dialogue.md
+    voice: pl-PL-MarekNeural         # monologue voice / dialogue fallback
+    voices: {A: pl-PL-MarekNeural, B: pl-PL-ZofiaNeural}   # dialogue speakers: Marek / Zofia
+    apply_pronunciations: true       # phonetic respelling of EN jargon (PL voices)
     title_prefix: ""
   - id: en
     language: en
+    format: dialogue
     prompt: system_brief_en.md
-    voice: en-US-AndrewMultilingualNeural   # natural English Azure voice (free)
-    apply_pronunciations: false     # English voice says English natively
+    dialogue_prompt: system_dialogue_en.md
+    voice: en-US-AndrewMultilingualNeural    # natural English Azure voice (free)
+    voices: {A: en-US-AndrewMultilingualNeural, B: en-US-AvaMultilingualNeural}   # Andrew / Ava
+    apply_pronunciations: false      # English voices say English natively
     title_prefix: "[EN] "
 
 voice:

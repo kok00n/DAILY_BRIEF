@@ -22,8 +22,25 @@ from .util import OUTPUT_DIR
 log = logging.getLogger("dailybrief.tts")
 
 MARKER_RE = re.compile(r"\[\[[^\]]*\]\]")
+SPEAKER_RE = re.compile(r"\[\[\s*([AB])\s*\]\]")
 MD_RE = re.compile(r"[#*_`>]+")
 MAX_CHARS = 2800
+
+
+def _split_turns(text: str, default: str = "A") -> list[tuple[str, str]]:
+    """Split a dialogue section into (speaker, text) turns by [[A]]/[[B]] markers."""
+    turns: list[tuple[str, str]] = []
+    pos, cur = 0, default
+    for m in SPEAKER_RE.finditer(text):
+        seg = text[pos:m.start()].strip()
+        if seg:
+            turns.append((cur, seg))
+        cur = m.group(1)
+        pos = m.end()
+    seg = text[pos:].strip()
+    if seg:
+        turns.append((cur, seg))
+    return turns or [(default, text)]
 
 
 def _apply_pronunciations(text: str, mapping: dict[str, str]) -> str:
@@ -81,11 +98,11 @@ async def _synth_chunk(text: str, voice: str, rate: str, pitch: str,
     raise RuntimeError(f"TTS failed after {attempts} attempts: {last}")
 
 
-async def _synth_all(parts: list[tuple[int, str]], voice: str, rate: str,
+async def _synth_all(parts: list[tuple[int, str, str]], rate: str,
                      pitch: str, parts_dir: Path) -> list[Path]:
     out_paths: list[Path] = []
     # sequential to stay gentle on the free endpoint (avoid throttling/blocks)
-    for idx, text in parts:
+    for idx, text, voice in parts:
         p = parts_dir / f"part_{idx:03d}.mp3"
         await _synth_chunk(text, voice, rate, pitch, p)
         out_paths.append(p)
@@ -129,6 +146,8 @@ def synthesize(cfg: Config, script: BriefScript, date_str: str,
     rate = cfg.get("voice", "rate", default="+0%")
     pitch = cfg.get("voice", "pitch", default="+0Hz")
     voice = edition.get("voice") or cfg.get("voice", "name", default="pl-PL-MarekNeural")
+    voices = edition.get("voices") or {}
+    dialogue = edition.get("format") == "dialogue" and bool(voices)
     pron = (cfg.get("voice", "pronunciations", default={}) or {}) \
         if edition.get("apply_pronunciations", True) else {}
 
@@ -138,23 +157,29 @@ def synthesize(cfg: Config, script: BriefScript, date_str: str,
     for old in parts_dir.glob("*.mp3"):
         old.unlink()
 
-    # build ordered chunk list across all sections
-    parts: list[tuple[int, str]] = []
+    # build ordered (idx, chunk, voice) list across all sections; in dialogue mode
+    # each [[A]]/[[B]] turn is read by its speaker's voice
+    parts: list[tuple[int, str, str]] = []
     idx = 0
     for sec in script.sections:
-        clean = clean_for_tts(sec["text"], pron)
-        if not clean:
-            continue
-        for chunk in _split_sentences(clean):
-            parts.append((idx, chunk))
-            idx += 1
+        turns = _split_turns(sec["text"]) if dialogue else [("_", sec["text"])]
+        for speaker, turn_text in turns:
+            clean = clean_for_tts(turn_text, pron)
+            if not clean:
+                continue
+            v = voices.get(speaker, voice) if dialogue else voice
+            for chunk in _split_sentences(clean):
+                parts.append((idx, chunk, v))
+                idx += 1
 
     if not parts:
         raise RuntimeError("nothing to synthesize (empty script)")
 
-    log.info("[%s] synthesizing %d chunks with voice %s ...", edition_id, len(parts), voice)
+    nvoices = len({p[2] for p in parts})
+    log.info("[%s] synthesizing %d chunks (%s, %d voice%s) ...", edition_id, len(parts),
+             "dialogue" if dialogue else "monologue", nvoices, "s" if nvoices != 1 else "")
     t0 = time.time()
-    part_paths = asyncio.run(_synth_all(parts, voice, rate, pitch, parts_dir))
+    part_paths = asyncio.run(_synth_all(parts, rate, pitch, parts_dir))
 
     out_mp3 = OUTPUT_DIR / f"brief_{date_str}{tag}.mp3"
     _concat(part_paths, out_mp3)

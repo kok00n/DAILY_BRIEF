@@ -165,7 +165,11 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str,
                     edition: dict | None = None) -> BriefScript:
     edition = edition or {"id": "pl", "language": "pl", "prompt": "system_brief.md"}
     lang = edition.get("language", "pl")
-    prompt_file = edition.get("prompt", "system_brief.md")
+    if edition.get("format") == "dialogue":
+        default_dlg = "system_dialogue_en.md" if lang == "en" else "system_dialogue.md"
+        prompt_file = edition.get("dialogue_prompt", default_dlg)
+    else:
+        prompt_file = edition.get("prompt", "system_brief_en.md" if lang == "en" else "system_brief.md")
 
     client = _client(cfg)
     targets = _section_targets(cfg, lang)

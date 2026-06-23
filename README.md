@@ -177,6 +177,10 @@ Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
 - `editions` — wersje językowe z tego samego researchu (domyślnie **PL + EN**); każda
   ma własny `prompt`, `voice` i flagę `apply_pronunciations`. Oba odcinki lądują w
   jednym feedzie (PL i `[EN]` codziennie). Usuń edycję = jeden język.
+  - `format: monologue | dialogue` (toggle per edycja). **dialogue** = rozmowa dwóch
+    analityków (kwestie `[[A]]`/`[[B]]`) czytana **dwoma głosami** (`voices.A`/`voices.B`;
+    PL Marek+Zofia, EN Andrew+Ava), prompt z `dialogue_prompt`. **monologue** = jeden
+    głos (`voice`) + `prompt`. Styl dialogu: gęsto, dwóch ekspertów, bez small-talku.
 - `voice.name` — domyślny/zapasowy głos; `voice.rate` np. `-5%`; `voice.pronunciations`
   — słownik wymowy (stosowany tylko gdy `apply_pronunciations: true`, czyli dla PL)
 - `sections` — kolejność, `title`/`title_en`, docelowe minuty (steruje też długością)

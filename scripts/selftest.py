@@ -87,6 +87,22 @@ check("pronunciations applied (EN jargon respelled)",
       and "hajer for longer" in spoken, spoken)
 check("non-listed words untouched", "Ton" in spoken)
 
+print("== dialogue mode ==")
+from dailybrief.synthesize import _split_turns  # noqa: E402
+from dailybrief.generate_script import _system_blocks  # noqa: E402
+_turns = _split_turns("[[A]] Dzień dobry, rates. [[B]] Tak, Bund wczoraj. [[A]] I PL.")
+check("dialogue split into 3 turns", len(_turns) == 3, str(_turns))
+check("turn speakers A/B/A", [t[0] for t in _turns] == ["A", "B", "A"])
+check("turn text carries no markers", all("[[" not in t[1] for t in _turns))
+check("clean_for_tts strips leftover speaker marker", "[[" not in clean_for_tts("[[A]] tekst", {}))
+check("no-marker section -> 1 default-A turn", _split_turns("zwykły tekst") == [("A", "zwykły tekst")])
+_dsys = _system_blocks(cfg, targets, "system_dialogue.md", "pl")[0]["text"]
+check("PL dialogue prompt loads + formats", "[[A]]" in _dsys and "DIALOG" in _dsys.upper()
+      and "{minutes}" not in _dsys, _dsys[:60])
+_densys = _system_blocks(cfg, _section_targets(cfg, "en"), "system_dialogue_en.md", "en")[0]["text"]
+check("EN dialogue prompt loads + formats", "[[A]]" in _densys and "DIALOGUE" in _densys.upper()
+      and "{total_words}" not in _densys)
+
 print("== market formatting ==")
 fake = {
     "rates_cores": [
