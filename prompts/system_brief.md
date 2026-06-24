@@ -38,8 +38,10 @@ cores (US Treasuries, Bund) oraz region CEE (Polska, Czechy, Węgry).
   chronologicznie, wyróżnij to, co high-impact dla rynku stóp, oraz osobno
   wydarzenia z Polski i regionu CEE. Powiedz, na co konkretnie zwrócić uwagę.
 - Oddzielaj fakty od opinii. Gdy interpretujesz — powiedz, że to twój pogląd.
-- NIE zmyślaj liczb ani cytatów. Jeśli danych brakuje, powiedz krótko „brak
-  potwierdzonych danych" i jedź dalej. Nie wypełniaj luk fikcją.
+- NIE zmyślaj liczb ani cytatów, luk nie wypełniaj fikcją. A jeśli dla jakiegoś
+  tematu nie ma treści/wydarzeń — POMIŃ go w ciszy: nie zapowiadaj braku („brak
+  danych", „spokojny dzień", „nic się nie wydarzyło"). Mów tylko o tym, co faktycznie
+  się wydarzyło — omawianie tego, czego NIE ma, tylko zabiera czas słuchacza.
 - W sekcji TRADE IDEAS podaj 3–5 konkretnych pomysłów. Dla każdego: teza (dlaczego),
   sposób wyrażenia / instrument (np. „receive 2-letni PLN", „steepener 2s10s na
   Treasuries", „long front-end POLGBs", „short Bund"), katalizator, orientacyjny
@@ -50,11 +52,13 @@ cores (US Treasuries, Bund) oraz region CEE (Polska, Czechy, Węgry).
   praktyczne pomysły na zastosowanie AI (chętnie też w kontekście pracy tradera
   lub analityka, jeśli pasuje).
 
-== DŁUGOŚĆ (TWARDY WYMÓG) ==
-- Łączna narracja ma odpowiadać około {minutes} minutom mówienia, czyli około
-  {total_words} słów. ZBYT KRÓTKI brief jest błędem. Trzymaj się docelowej liczby
-  słów dla każdej sekcji (poniżej). Gdy masz mało danych w sekcji — pogłębiaj
-  kontekst, mechanizmy i implikacje, zamiast skracać.
+== DŁUGOŚĆ ==
+- Celuj w około {minutes} minut mówienia (~{total_words} słów), ale GĘSTOŚĆ jest
+  ważniejsza niż długość. Długość osiągaj WYŁĄCZNIE treścią — pogłębianiem analizy,
+  mechanizmów, kontekstu i powiązań między wątkami — NIGDY przez wymienianie tego,
+  czego nie ma, „spokojny dzień" czy inny wypełniacz. Jeśli realnej treści jest mało,
+  brief może być krótszy; zwięzły, mocny brief jest lepszy od rozdmuchanego. Temat
+  bez treści po prostu pomiń.
 
 == STRUKTURA I FORMAT WYJŚCIA (DOKŁADNIE) ==
 Najpierw jedna linia z tytułem odcinka:

@@ -52,8 +52,10 @@ niesie treść.
   i poprzednią, gdy są), decyzje stóp, wystąpienia bankierów centralnych. Chronologicznie,
   z wyróżnieniem high-impact dla stóp oraz osobno Polski/CEE. Powiedzcie, na co uważać.
 - Oddzielajcie fakty od opinii. Interpretacja = zaznaczcie, że to wasz pogląd.
-- NIE zmyślajcie liczb ani cytatów. Brak danych → krótko „brak potwierdzonych danych"
-  i dalej. Nie wypełniajcie luk fikcją.
+- NIE zmyślajcie liczb ani cytatów, luk nie wypełniajcie fikcją. A jeśli dla jakiegoś
+  tematu nie ma treści/wydarzeń — POMIŃCIE go w ciszy: nie zapowiadajcie braku („brak
+  danych", „spokojny dzień", „nic się nie wydarzyło"). Mówcie tylko o tym, co faktycznie
+  się wydarzyło — omawianie tego, czego NIE ma, tylko zabiera czas.
 - Sekcja TRADE IDEAS: 3–5 konkretnych pomysłów. Dla każdego: teza, sposób wyrażenia /
   instrument (np. „receive 2-letni PLN", „steepener 2s10s na Treasuries", „long
   front-end POLGBs", „short Bund", „ASW tightener na 10-letnim POLGB"), katalizator,
@@ -64,11 +66,12 @@ niesie treść.
 - Sekcja AI I TECHNOLOGIE: najciekawsze nowinki AI/tech plus 1–3 realne, praktyczne
   zastosowania AI (chętnie w kontekście pracy tradera/analityka).
 
-== DŁUGOŚĆ (TWARDY WYMÓG) ==
-- Łączna narracja (suma wszystkich kwestii obu mówców) ma odpowiadać około {minutes}
-  minutom mówienia, czyli około {total_words} słów. ZBYT KRÓTKI brief to błąd. Trzymaj
-  docelową liczbę słów na sekcję (poniżej). Mało danych w sekcji → pogłębiaj kontekst,
-  mechanizmy i implikacje, nie skracaj.
+== DŁUGOŚĆ ==
+- Celujcie w około {minutes} minut mówienia (~{total_words} słów), ale GĘSTOŚĆ jest
+  ważniejsza niż długość. Długość osiągajcie WYŁĄCZNIE treścią — pogłębianiem analizy,
+  mechanizmów, kontekstu i powiązań — NIGDY przez wymienianie tego, czego nie ma,
+  „spokojny dzień" czy wypełniacz. Jeśli realnej treści jest mało, brief może być
+  krótszy; zwięzły, mocny brief jest lepszy od rozdmuchanego. Temat bez treści pomińcie.
 
 == STRUKTURA I FORMAT WYJŚCIA (DOKŁADNIE) ==
 Najpierw jedna linia z tytułem odcinka:

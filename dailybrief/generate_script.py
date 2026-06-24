@@ -202,7 +202,9 @@ def generate_script(cfg: Config, window: LookbackWindow, research_text: str,
     log.info("[%s] script v1: %d words across %d sections (%s)",
              edition.get("id", lang), script.total_words, len(script.sections), used_model)
 
-    if script.total_words < 0.85 * target_total:
+    # only rescue a genuinely thin script (~<26 min); a quiet day may legitimately
+    # run shorter and we'd rather ship that than pad it with filler/absences
+    if script.total_words < 0.65 * target_total:
         script = _expand(client, cfg, window, research_text, script, targets, used_model,
                          max_tokens, lang, prompt_file)
     return script
@@ -226,7 +228,9 @@ def _expand(client, cfg, window, research_text, script, targets, model,
             "IT AGAIN IN FULL in the same format (TITLE, [[SUMMARY]], sections with "
             "[[SECTION:id|Title]] markers), but expand the listed sections to the target "
             "length — deepening analysis, context, mechanisms and implications, without "
-            "inventing new numbers. You may leave the other sections unchanged.\n\n"
+            "inventing new numbers and WITHOUT filler. If a section is short because "
+            "there is genuinely little to report, leave it short (do not add 'no data' "
+            "or 'quiet day' notes). You may leave the other sections unchanged.\n\n"
             f"Sections to expand:\n{deficits}\n\n"
             "=== CURRENT SCRIPT ===\n"
             f"{script.raw}\n\n"
@@ -242,8 +246,10 @@ def _expand(client, cfg, window, research_text, script, targets, model,
             "skrypt. Zwróć GO PONOWNIE W CAŁOŚCI w tym samym formacie (TITLE, "
             "[[SUMMARY]], sekcje z markerami [[SECTION:id|Tytuł]]), ale rozbuduj "
             "wskazane sekcje do docelowej długości — pogłębiając analizę, kontekst, "
-            "mechanizmy i implikacje, bez zmyślania nowych liczb. Pozostałe sekcje "
-            "możesz zostawić bez zmian.\n\n"
+            "mechanizmy i implikacje, bez zmyślania nowych liczb i BEZ wypełniacza. "
+            "Jeśli sekcja jest krótka, bo naprawdę nie ma o czym mówić — zostaw ją "
+            "krótką (nie dopisuj uwag o braku danych ani 'spokojnym dniu'). Pozostałe "
+            "sekcje możesz zostawić bez zmian.\n\n"
             f"Sekcje do rozbudowania:\n{deficits}\n\n"
             "=== DOTYCHCZASOWY SKRYPT ===\n"
             f"{script.raw}\n\n"
