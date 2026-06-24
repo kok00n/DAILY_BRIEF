@@ -84,30 +84,31 @@ def _fetch_cee_supplement(cfg: Config, window: LookbackWindow) -> str:
     date_iso = today.date().isoformat()
     if window.is_weekly:
         end_iso = (today + timedelta(days=7)).date().isoformat()
-        scope = (f"SCHEDULED FOR THE WEEK AHEAD, {date_iso} to {end_iso}, grouped by day "
-                 "(give the date for each)")
-        none_clause = "If there are genuinely no scheduled CEE events this week, say so explicitly."
+        scope = f"scheduled for the week ahead, {date_iso} to {end_iso} (prefix each with its day)"
     else:
-        scope = f"SCHEDULED FOR TODAY, {date_iso}"
-        none_clause = "If there are genuinely no scheduled CEE events today, say so explicitly."
+        scope = f"scheduled for today, {date_iso}"
     prompt = (
-        f"List the economic events {scope}, in Poland, Czechia "
-        f"and Hungary: data releases (CPI, GDP, PMI, labour market, current account, "
-        f"budget, bond auctions), and any central bank actions — NBP/RPP, CNB, MNB — "
-        f"rate decisions, minutes, press conferences or speeches. Give the scheduled "
-        f"time in CET (Warsaw time), plus forecast and previous where available. "
-        f"Also list notable Fed and ECB speakers or press conferences with times. "
-        f"If a time is not confirmed, say 'godzina niepotwierdzona'. Tight bullet points. "
-        f"{none_clause}"
+        f"List economic events {scope} in Poland, Czechia and Hungary: data releases "
+        f"(CPI, GDP, PMI, labour market, current account, budget, bond auctions) and "
+        f"central-bank actions — NBP/RPP, CNB, MNB — decisions, minutes, pressers, "
+        f"speeches. Also notable Fed and ECB speakers/pressers. Give time in CET (Warsaw), "
+        f"plus forecast and previous where available; if a time is unconfirmed write "
+        f"'godzina niepotwierdzona'.\n\n"
+        f"OUTPUT RULES (strict): output ONLY a tight bullet list, one event per line. "
+        f"Do NOT write any commentary, preamble, or explanation about calendars, sources "
+        f"or your own limitations. If you cannot confirm any events, reply with EXACTLY "
+        f"this one line and nothing else: Brak potwierdzonych wydarzeń."
     )
     body = {
         "model": cfg.get("perplexity", "model", default="sonar-pro"),
         "messages": [
             {"role": "system", "content": "You are a precise economic-calendar assistant. "
-             "Only list events that are actually scheduled; never invent times."},
+             "Only list events that are actually scheduled; never invent times. Output only "
+             "the bullet list or the single fallback line — never meta-commentary about "
+             "data availability."},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 1100 if window.is_weekly else 800,
+        "max_tokens": 700,
         "temperature": 0.1,
         "search_recency_filter": "week",
     }

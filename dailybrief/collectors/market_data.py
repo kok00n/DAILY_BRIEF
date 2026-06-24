@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from typing import Any
@@ -48,6 +49,29 @@ def _quote(name: str, value: float | None, prev: float | None,
 # --------------------------------------------------------------------------- #
 # FRED
 # --------------------------------------------------------------------------- #
+def _get_with_retry(url: str, params: dict, attempts: int = 3) -> requests.Response:
+    """GET with retry on transient failures (5xx / network). 4xx fails fast.
+    FRED occasionally returns a 502 Bad Gateway — a single one shouldn't blank a
+    symbol when a retry a second later succeeds."""
+    last: Exception | None = None
+    for i in range(1, attempts + 1):
+        try:
+            r = requests.get(url, params=params, timeout=HTTP_TIMEOUT, headers=UA)
+        except requests.RequestException as e:
+            last = e
+            if i < attempts:
+                time.sleep(1.5 * i)
+                continue
+            raise
+        if r.status_code >= 500 and i < attempts:
+            last = requests.HTTPError(f"{r.status_code} Server Error", response=r)
+            time.sleep(1.5 * i)
+            continue
+        r.raise_for_status()
+        return r
+    raise last  # type: ignore[misc]
+
+
 def _prev_by_lag(vals_desc: list[tuple[str, float]], days: int) -> float | None:
     """vals_desc: (date, value) sorted newest-first. Return the value ~`days`
     before the latest (first observation on/before that target date), for a
@@ -76,8 +100,7 @@ def _fred_series(series_id: str, api_key: str, weekly: bool = False
         "series_id": series_id, "api_key": api_key, "file_type": "json",
         "sort_order": "desc", "limit": 40 if weekly else 12,
     }
-    r = requests.get(url, params=params, timeout=HTTP_TIMEOUT, headers=UA)
-    r.raise_for_status()
+    r = _get_with_retry(url, params)
     obs = r.json().get("observations", [])
     vals: list[tuple[str, float]] = []
     for o in obs:
