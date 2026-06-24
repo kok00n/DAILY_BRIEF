@@ -51,6 +51,11 @@ class LookbackWindow:
     start: datetime            # tz-aware, local — beginning of coverage window
     is_monday_after_weekend: bool
     label_pl: str              # human label, e.g. "ostatnich 24 godzin"
+    kind: str = "daily"        # "daily" | "weekly" (weekly = the Sunday review podcast)
+
+    @property
+    def is_weekly(self) -> bool:
+        return self.kind == "weekly"
 
     @property
     def days(self) -> int:
@@ -82,7 +87,21 @@ def compute_window(tz_name: str, weekend_lookback: bool = True,
     start = now - timedelta(hours=hours)
     label = "ostatnich 48 godzin (weekend)" if is_monday else "ostatnich 24 godzin"
     return LookbackWindow(now=now, start=start,
-                          is_monday_after_weekend=is_monday, label_pl=label)
+                          is_monday_after_weekend=is_monday, label_pl=label,
+                          kind="daily")
+
+
+def compute_weekly_window(tz_name: str, days: int = 7,
+                          reference: datetime | None = None) -> LookbackWindow:
+    """Window for the WEEKLY review podcast: the last `days` (default 7), counting
+    back from now. Used by the Sunday-evening CEE research digest."""
+    tz = ZoneInfo(tz_name)
+    now = (reference or datetime.now(tz)).astimezone(tz)
+    start = now - timedelta(days=max(1, days))
+    label = "miniony tydzień"
+    return LookbackWindow(now=now, start=start,
+                          is_monday_after_weekend=False, label_pl=label,
+                          kind="weekly")
 
 
 def polish_date_phrase(dt: datetime) -> str:

@@ -71,10 +71,11 @@ QUERIES: dict[str, str] = {
 
 
 def _time_filter(window: LookbackWindow) -> dict:
-    """Constrain search to the lookback window: 24h on Tue–Fri, 48h on Monday.
-    Perplexity has no 48h recency bucket, so Monday uses search_after_date_filter
-    (date of now-48h); Tue–Fri use the 'day' recency (~24h). The two filters
-    cannot be combined."""
+    """Constrain search to the lookback window. Weekly review = the 'week' recency
+    bucket. Daily: 24h on Tue–Fri, 48h on Monday (Perplexity has no 48h bucket, so
+    Monday uses search_after_date_filter of now-48h). The two filters can't combine."""
+    if window.is_weekly:
+        return {"search_recency_filter": "week"}
     if window.is_monday_after_weekend:
         return {"search_after_date_filter": window.from_date_us}
     return {"search_recency_filter": "day"}
@@ -172,14 +173,33 @@ def _query(topic: str, prompt: str, cfg: Config, window: LookbackWindow,
     return {"topic": topic, "text": content.strip(), "citations": _extract_sources(data)}
 
 
+def _query_set(cfg: Config) -> dict[str, str]:
+    """Base QUERIES + any config-supplied perplexity.extra_queries (e.g. the weekly
+    `cee_research` query), optionally restricted to perplexity.topics_include."""
+    queries = dict(QUERIES)
+    extra = cfg.get("perplexity", "extra_queries", default=None) or {}
+    if isinstance(extra, dict):
+        queries.update(extra)
+    include = cfg.get("perplexity", "topics_include", default=None)
+    if isinstance(include, list) and include:
+        queries = {k: v for k, v in queries.items() if k in include}
+    return queries
+
+
 def collect_news(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     api_key = cfg.require_env("PERPLEXITY_API_KEY")
-    win_phrase = "48 hours (the weekend)" if window.is_monday_after_weekend else "24 hours"
+    if window.is_weekly:
+        win_phrase = "week"
+    elif window.is_monday_after_weekend:
+        win_phrase = "48 hours (the weekend)"
+    else:
+        win_phrase = "24 hours"
+    queries = _query_set(cfg)
     results: dict[str, Any] = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {
             ex.submit(_query, topic, tmpl.format(w=win_phrase), cfg, window, api_key): topic
-            for topic, tmpl in QUERIES.items()
+            for topic, tmpl in queries.items()
         }
         for fut in as_completed(futs):
             topic = futs[fut]
@@ -189,7 +209,7 @@ def collect_news(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
                 log.warning("perplexity topic '%s' failed: %s", topic, e)
                 results[topic] = {"topic": topic, "text": "", "citations": [], "error": str(e)}
     ok = sum(1 for r in results.values() if r.get("text"))
-    log.info("news: %d/%d Perplexity topics returned content", ok, len(QUERIES))
+    log.info("news: %d/%d Perplexity topics returned content", ok, len(queries))
     return results
 
 
@@ -197,13 +217,17 @@ def format_news_text(news: dict) -> str:
     titles = {
         "rates": "RATES & BONDS", "macro": "MACRO DATA", "fx": "FX",
         "equities": "EQUITIES", "commodities": "COMMODITIES", "crypto": "CRYPTO",
-        "cee": "CEE REGION", "ai_tech": "AI & TECH",
+        "cee": "CEE REGION", "cee_research": "CEE RESEARCH DESKS (week)",
+        "ai_tech": "AI & TECH",
     }
+    # preferred order first, then any extra config-supplied topics
+    order = list(titles) + [t for t in news if t not in titles]
     blocks = []
-    for topic, title in titles.items():
+    for topic in order:
         r = news.get(topic) or {}
         if not r.get("text"):
             continue
+        title = titles.get(topic, topic.replace("_", " ").upper())
         srcs = r.get("citations", [])[:6]
         src_line = ("\n  źródła: " + " | ".join(srcs)) if srcs else ""
         blocks.append(f"### {title}\n{r['text']}{src_line}")

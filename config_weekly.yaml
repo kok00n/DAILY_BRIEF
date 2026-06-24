@@ -1,0 +1,187 @@
+# =====================================================================
+# WEEKLY (Sunday) CEE research-review podcast — PUBLIC, for Spotify.
+#
+# Inherits everything from config.yaml (voice + pronunciations, market
+# universe, swaps/fx/cee_yields, claude, calendar) and only overrides what
+# differs for the weekly edition. Run with:
+#   python run_brief.py --config config_weekly.yaml
+# =====================================================================
+extends: config.yaml
+
+general:
+  timezone: "Europe/Warsaw"
+  cadence: "weekly"            # selects compute_weekly_window in run_brief.py
+  lookback_days: 7             # the review covers the last 7 days
+  brief_target_minutes: 35     # weekly review length (vs 40 for the daily)
+  words_per_minute: 145
+
+# Which collectors run for the weekly. Social/FinTwit is OFF (the research desks
+# replace it and keep cost down); the research-portal RSS collector is ON.
+collectors:
+  market: true
+  news: true
+  social: false
+  calendar: true
+  cee_yields: true
+  swaps: true
+  fx: true
+  research: true
+
+# Public research-portal feeds (RSS/Atom, server-rendered, browser-UA). The last
+# 7 days of items are filtered (optionally by keyword) into a "what the desks
+# published this week" digest. Non-RSS portals (PKO/mBank/Pekao/Erste/Millennium/
+# CA/Citi/KB/MNB) are covered analytically via the Perplexity cee_research
+# allowlist below. Add more RSS sources freely — each is failure-tolerant.
+research:
+  enabled: true
+  summary_chars: 600           # per-item abstract cap
+  max_total_chars: 18000       # total digest cap fed to the prompt
+  sources:
+    - name: "ING THINK"
+      type: rss
+      url: "https://think.ing.com/rss"
+      lang: en
+      max_items: 16
+      keywords: [poland, polish, zloty, czech, koruna, hungary, hungarian, forint,
+                 cee, ceemea, nbp, cnb, mnb, rates, "rates spark", "fx daily", bund,
+                 ecb, fed, treasury, treasuries, yield, curve, "fixed income",
+                 inflation, "central bank"]
+    - name: "PIE (Polski Instytut Ekonomiczny)"
+      type: rss
+      url: "https://pie.net.pl/feed/"
+      lang: pl
+      max_items: 8
+    - name: "Czech National Bank"
+      type: rss
+      url: "https://www.cnb.cz/en/.content/rss-feed/rss-feed_tz.xml"
+      lang: en
+      max_items: 8
+
+# Weekly Perplexity: restrict to the CEE/rates topics + add a dedicated
+# 'cee_research' pass scoped (via the allowlist) to the bank/institutional desks.
+perplexity:
+  topics_include: [rates, macro, fx, cee, cee_research]
+  extra_queries:
+    cee_research: >-
+      Summaries from CEE bank and institutional research desks published in the
+      last {w} on Poland, Czechia and Hungary rates, bonds, FX and macro: PKO
+      Research, mBank, Bank Pekao, Santander/Erste, Bank Millennium, Credit
+      Agricole, Citi Handlowy, PIE, ING THINK, Komercni banka (KB), Erste Group,
+      and central banks NBP, CNB, MNB. Capture their key forecasts (CPI, GDP,
+      policy-rate paths), bond/yield calls, FX targets, and where desks disagree.
+      Attribute each view to its institution.
+
+# Add the research-desk allowlist for the cee_research topic (merged onto the
+# inherited news.allow_domains). Max 20 domains.
+news:
+  allow_domains:
+    cee_research:
+      - pkobp.pl
+      - mbank.pl
+      - pekao.com.pl
+      - erste.pl
+      - bankmillennium.pl
+      - credit-agricole.pl
+      - citibank.pl
+      - pie.net.pl
+      - think.ing.com
+      - ing.pl
+      - cnb.cz
+      - mnb.hu
+      - nbp.pl
+      - trading.kb.cz
+      - erstegroup.com
+      - erstemarket.hu
+      - gov.pl
+      - bankier.pl
+      - parkiet.com
+      - pb.pl
+
+# Two editions (PL + EN), dialogue, using the weekly prompt set. Same voices as
+# the daily so the brand voice is consistent.
+editions:
+  - id: pl
+    language: pl
+    format: dialogue
+    prompt: system_weekly.md
+    dialogue_prompt: system_weekly_dialogue.md
+    voice: pl-PL-MarekNeural
+    voices: {A: pl-PL-MarekNeural, B: pl-PL-ZofiaNeural}
+    apply_pronunciations: true
+    title_prefix: ""
+  - id: en
+    language: en
+    format: dialogue
+    prompt: system_weekly_en.md
+    dialogue_prompt: system_weekly_dialogue_en.md
+    voice: en-US-AndrewMultilingualNeural
+    voices: {A: en-US-AndrewMultilingualNeural, B: en-US-AvaMultilingualNeural}
+    apply_pronunciations: false
+    title_prefix: "[EN] "
+
+# Weekly section plan (~35 min). The rates review and trade ideas are emphasised.
+sections:
+  - id: open
+    title: "Wstęp i tydzień w pigułce"
+    title_en: "Intro and the week in a nutshell"
+    target_min: 2
+    feeds: [market, research, news]
+  - id: rates
+    title: "Stopy i obligacje — CEE i cores"
+    title_en: "Rates and bonds — CEE and cores"
+    target_min: 11
+    feeds: [market, research, news]
+    emphasis: true
+  - id: macro_cb
+    title: "Makro i banki centralne — co powiedziano"
+    title_en: "Macro and central banks — what was said"
+    target_min: 5
+    feeds: [research, news]
+  - id: fx
+    title: "FX — złoty i waluty regionu"
+    title_en: "FX — the zloty and regional currencies"
+    target_min: 3
+    feeds: [market, news]
+  - id: research_views
+    title: "Co mówią ośrodki — prognozy i spory"
+    title_en: "What the desks say — forecasts and disagreements"
+    target_min: 6
+    feeds: [research, news]
+    emphasis: true
+  - id: week_ahead
+    title: "Tydzień przed nami — kalendarz"
+    title_en: "The week ahead — calendar"
+    target_min: 4
+    feeds: [calendar]
+  - id: trade_ideas
+    title: "Pozycjonowanie i trade ideas"
+    title_en: "Positioning and trade ideas"
+    target_min: 4
+    feeds: [market, research, news]
+    emphasis: true
+
+# Separate PUBLIC feed, isolated in its own R2 key namespace ("weekly/") so it
+# never touches the private daily feed. Submit feed_url (…/weekly/feed.xml) once
+# at podcasters.spotify.com; Spotify then auto-ingests new episodes from the RSS.
+publish:
+  podcast_title: "Tygodnik Rynkowy CEE"
+  podcast_author: "DAILY_BRIEF"
+  podcast_description: >-
+    Cotygodniowy, niedzielny przegląd rynków stóp procentowych i obligacji w
+    regionie CEE — Polska, Czechy, Węgry — na tle rynków bazowych (US Treasuries,
+    Bund). Streszczam i syntetyzuję analizy czołowych ośrodków badawczych z
+    minionego tygodnia (PKO Research, mBank, Pekao, Santander/Erste, Millennium,
+    Credit Agricole, Citi Handlowy, PIE, ING THINK, KB, Erste Group) oraz
+    komunikaty banków centralnych (NBP, CNB, MNB): prognozy CPI, ścieżki stóp,
+    rentowności obligacji, kursy walut i pozycjonowanie. Na koniec kalendarz na
+    nadchodzący tydzień i konkretne trade ideas. Wydania po polsku i po angielsku.
+    Materiał informacyjny, nie porada inwestycyjna.
+  podcast_language: "pl"
+  podcast_email: "kamilkonat@gmail.com"
+  podcast_subtitle: "CEE rates & bonds — tygodniowy przegląd analiz"
+  cover_image_url: ""
+  cover_file: "cover.jpg"        # reuse the daily cover for now (own key: weekly/cover.jpg)
+  cover_generate: true
+  keep_episodes: 60              # ~14 months of weekly episodes
+  feed_filename: "feed.xml"      # actual object key becomes weekly/feed.xml
+  key_prefix: "weekly/"

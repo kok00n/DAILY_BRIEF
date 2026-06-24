@@ -48,11 +48,33 @@ def _quote(name: str, value: float | None, prev: float | None,
 # --------------------------------------------------------------------------- #
 # FRED
 # --------------------------------------------------------------------------- #
-def _fred_series(series_id: str, api_key: str) -> tuple[float | None, float | None, str | None]:
+def _prev_by_lag(vals_desc: list[tuple[str, float]], days: int) -> float | None:
+    """vals_desc: (date, value) sorted newest-first. Return the value ~`days`
+    before the latest (first observation on/before that target date), for a
+    week-over-week change. Falls back to the oldest available."""
+    if len(vals_desc) < 2:
+        return None
+    from datetime import date as _date
+    try:
+        latest_d = _date.fromisoformat(vals_desc[0][0])
+    except ValueError:
+        return vals_desc[1][1]
+    target = latest_d - timedelta(days=days)
+    for d, v in vals_desc[1:]:
+        try:
+            if _date.fromisoformat(d) <= target:
+                return v
+        except ValueError:
+            continue
+    return vals_desc[-1][1]
+
+
+def _fred_series(series_id: str, api_key: str, weekly: bool = False
+                 ) -> tuple[float | None, float | None, str | None]:
     url = "https://api.stlouisfed.org/fred/series/observations"
     params = {
         "series_id": series_id, "api_key": api_key, "file_type": "json",
-        "sort_order": "desc", "limit": 12,
+        "sort_order": "desc", "limit": 40 if weekly else 12,
     }
     r = requests.get(url, params=params, timeout=HTTP_TIMEOUT, headers=UA)
     r.raise_for_status()
@@ -65,12 +87,12 @@ def _fred_series(series_id: str, api_key: str) -> tuple[float | None, float | No
                 vals.append((o["date"], float(v)))
             except ValueError:
                 continue
-        if len(vals) >= 2:
+        if not weekly and len(vals) >= 2:
             break
     if not vals:
         return None, None, None
     latest = vals[0]
-    prev = vals[1][1] if len(vals) > 1 else None
+    prev = _prev_by_lag(vals, 7) if weekly else (vals[1][1] if len(vals) > 1 else None)
     return latest[1], prev, latest[0]
 
 
@@ -144,15 +166,24 @@ def _stooq_series(symbol: str, window: LookbackWindow, apikey: str = ""
 # --------------------------------------------------------------------------- #
 # Yahoo (yfinance)
 # --------------------------------------------------------------------------- #
-def _yahoo_series(symbol: str) -> tuple[float | None, float | None, str | None]:
+def _yahoo_series(symbol: str, weekly: bool = False
+                  ) -> tuple[float | None, float | None, str | None]:
     import yfinance as yf  # imported lazily; heavy
-    hist = yf.Ticker(symbol).history(period="7d", interval="1d", auto_adjust=False)
+    period = "1mo" if weekly else "7d"
+    hist = yf.Ticker(symbol).history(period=period, interval="1d", auto_adjust=False)
     closes = hist["Close"].dropna()
     if len(closes) == 0:
         return None, None, None
     latest = float(closes.iloc[-1])
-    prev = float(closes.iloc[-2]) if len(closes) > 1 else None
     asof = closes.index[-1].strftime("%Y-%m-%d")
+    if weekly:
+        # week-over-week: the close from ~7 calendar days before the latest bar
+        target = closes.index[-1] - timedelta(days=7)
+        earlier = closes[closes.index <= target]
+        prev = float(earlier.iloc[-1]) if len(earlier) else (
+            float(closes.iloc[0]) if len(closes) > 1 else None)
+    else:
+        prev = float(closes.iloc[-2]) if len(closes) > 1 else None
     return latest, prev, asof
 
 
@@ -167,15 +198,16 @@ def _fetch_one(item: dict, cfg: Config, window: LookbackWindow,
         q = _quote(name, None, None, unit, None, is_yield)
         q["error"] = "skipped (no STOOQ_API_KEY)"
         return q
+    weekly = window.is_weekly
     try:
         if source == "fred":
             if not fred_key:
                 raise RuntimeError("FRED_API_KEY missing")
-            v, p, asof = _fred_series(sid, fred_key)
+            v, p, asof = _fred_series(sid, fred_key, weekly)
         elif source == "stooq":
             v, p, asof = _stooq_series(sid, window, cfg.env.get("STOOQ_API_KEY", ""))
         elif source == "yahoo":
-            v, p, asof = _yahoo_series(sid)
+            v, p, asof = _yahoo_series(sid, weekly)
         else:
             raise ValueError(f"unknown source {source}")
         return _quote(name, v, p, unit, asof, is_yield)

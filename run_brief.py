@@ -19,11 +19,13 @@ import sys
 import time
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 from dailybrief import aggregate, generate_script, publish, synthesize
 from dailybrief.config import load_config
 from dailybrief.generate_script import BriefScript
-from dailybrief.util import OUTPUT_DIR, compute_window, setup_logging
+from dailybrief.util import (OUTPUT_DIR, compute_weekly_window, compute_window,
+                             setup_logging)
 
 
 def _script_json(date_str: str, edition_id: str = "pl") -> "Path":
@@ -79,6 +81,12 @@ def _log_data_check(log, dossier: dict) -> None:
     for key in ("news", "social", "calendar"):
         d = dossier.get(key, {}) or {}
         log.info("%-12s %s", key, f"error: {d['error']}" if d.get("error") else "ok")
+    rsrch = dossier.get("research", {}) or {}
+    if rsrch.get("enabled"):
+        log.info("%-12s %d items across sources:", "research", rsrch.get("n_items", 0))
+        for s in rsrch.get("sources", []):
+            note = f"error: {s['error']}" if s.get("error") else f"{len(s.get('items', []))} items"
+            log.info("  %-30s %s", s.get("name", "?"), note)
     log.info("--------------------------------")
 
 
@@ -98,20 +106,28 @@ def main() -> int:
     ap.add_argument("--collect-only", action="store_true",
                     help="collect + aggregate only; dump dossier/research + a data-check "
                          "summary, then stop (no Claude script, no audio, no publish)")
+    ap.add_argument("--config", default=None,
+                    help="path to a config file (default config.yaml). Use "
+                         "config_weekly.yaml for the Sunday CEE research-review podcast.")
     args = ap.parse_args()
 
     log = setup_logging()
     t0 = time.time()
-    cfg = load_config()
+    cfg = load_config(Path(args.config) if args.config else None)
     if args.local:
         # neutralise R2 so publish() uses local mode
         for k in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
                   "R2_PUBLIC_BASE_URL"):
             cfg.env.pop(k, None)
 
-    window = compute_window(cfg.tz, cfg.weekend_lookback)
+    cadence = cfg.get("general", "cadence", default="daily")
+    if cadence == "weekly":
+        days = int(cfg.get("general", "lookback_days", default=7))
+        window = compute_weekly_window(cfg.tz, days)
+    else:
+        window = compute_window(cfg.tz, cfg.weekend_lookback)
     date_str = window.now.strftime("%Y%m%d")
-    log.info("=== DAILY_BRIEF %s | window: %s ===",
+    log.info("=== DAILY_BRIEF [%s] %s | window: %s ===", cadence,
              window.now.strftime("%Y-%m-%d %H:%M %Z"), window.label_pl)
 
     try:

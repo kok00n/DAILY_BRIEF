@@ -158,6 +158,42 @@ Po pierwszym pełnym biegu w logu znajdziesz **RSS feed URL**
 Ustaw auto-pobieranie nowych odcinków rano — telefon ściągnie brief sam.
 *(Spotify nie pozwala dodać dowolnego RSS-a ręcznie — użyj jednej z powyższych.)*
 
+---
+
+## 📅 Tygodnik CEE (publiczny, na Spotify)
+
+Drugi, **niezależny** podcast: cotygodniowy, niedzielny przegląd CEE budowany z
+**analiz ośrodków badawczych** z minionego tygodnia (PKO Research, mBank, Pekao,
+Santander/Erste, Millennium, Credit Agricole, Citi, PIE, ING THINK, KB, Erste
+Group + banki centralne NBP/CNB/MNB) i komunikatów banków centralnych. Ta sama
+ścieżka (collect→aggregate→Opus→TTS→publish), ale:
+
+- **Config:** [config_weekly.yaml](config_weekly.yaml) (dziedziczy z `config.yaml`
+  przez `extends:` — dokłada tylko różnice). Okno = **ostatnie 7 dni** + kalendarz
+  na **nadchodzący tydzień**.
+- **Źródła analiz:** nowy kolektor `research_portals.py` zaciąga RSS (ING THINK,
+  PIE, ČNB), a Perplexity z allowlistą `cee_research` pokrywa portale bez RSS.
+- **Wersje:** PL + EN (dialog, te same głosy Marek/Zofia, Andrew/Ava).
+- **Osobny, publiczny feed** w R2 pod prefiksem `weekly/` (`weekly/feed.xml`,
+  `weekly/episodes.json`, `weekly/cover.*`) — **nie miesza się** z prywatnym
+  feedem dziennym w tym samym buckecie.
+- **Workflow:** [.github/workflows/weekly-brief.yml](.github/workflows/weekly-brief.yml),
+  cron **niedziela 16:00 UTC ≈ 18:00 CEST**. Te same sekrety co daily.
+
+Uruchomienie lokalnie / ręcznie:
+```powershell
+python run_brief.py --config config_weekly.yaml --collect-only   # sam check danych
+python run_brief.py --config config_weekly.yaml                   # pełny bieg
+```
+
+### Publikacja na Spotify (jednorazowo)
+Spotify **samo zaciąga** odcinki z RSS — nie da się ich „wgrać" programowo.
+1. Odpal raz `weekly-brief` (full), żeby powstał `…/weekly/feed.xml`.
+2. Wejdź na **podcasters.spotify.com** → *Add your podcast* → wklej URL feedu.
+3. Spotify wyśle kod weryfikacyjny na `publish.podcast_email`
+   (`kamilkonat@gmail.com`) — potwierdź własność. Gotowe; kolejne niedzielne
+   odcinki pojawią się automatycznie. (Tak samo zgłosisz feed do Apple Podcasts.)
+
 ## Koszty (orientacyjnie / dzień)
 
 | Składnik | Koszt |
@@ -216,19 +252,25 @@ Chcesz taniej? W [config.yaml](config.yaml) zmień `claude.model` na
 ## Architektura (pliki)
 
 ```
-run_brief.py                 # orkiestrator + CLI
-config.yaml                  # cała konfiguracja
-prompts/system_brief.md      # persona + format dla Opus
+run_brief.py                 # orkiestrator + CLI (--config wybiera daily/weekly)
+config.yaml                  # konfiguracja daily
+config_weekly.yaml           # konfiguracja weekly (extends: config.yaml)
+prompts/system_brief*.md     # persona + format dla Opus (daily, mono+dialog, PL/EN)
+prompts/system_weekly*.md    # persona + format dla Opus (weekly, mono+dialog, PL/EN)
 dailybrief/
-  config.py  util.py
-  aggregate.py               # uruchamia kolektory, składa dossier + tekst kontekstu
+  config.py  util.py         # config (extends/merge) + okna (daily/weekly)
+  aggregate.py               # uruchamia kolektory (config-driven), składa dossier + tekst
   generate_script.py         # Opus 4.8 -> skrypt (markery sekcji, pass wydłużający)
   synthesize.py              # edge-tts -> MP3 (ffmpeg/binary concat)
-  publish.py                 # feedgen RSS + upload R2 + prune
+  publish.py                 # feedgen RSS + upload R2 + prune (key_prefix per feed)
   collectors/
-    market_data.py  news_perplexity.py  social_grok.py
+    market_data.py  news_perplexity.py  social_grok.py  econ_calendar.py
+    cee_yields.py  swap_rates.py  fx_rates.py  research_portals.py  # research = weekly
 scripts/
-  setup.ps1  run_brief.ps1  install_task.ps1
+  setup.ps1  run_brief.ps1  install_task.ps1  selftest.py
+.github/workflows/
+  daily-brief.yml            # codziennie (Pon-Pt 06:30 CEST)
+  weekly-brief.yml           # co niedzielę (18:00 CEST) -> publiczny feed weekly/
 ```
 
 > Trade ideas generowane przez narzędzie to materiał informacyjny/edukacyjny,

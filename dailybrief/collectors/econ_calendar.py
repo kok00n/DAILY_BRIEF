@@ -10,7 +10,7 @@ Two sources:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -38,6 +38,8 @@ def _fetch_structured(cfg: Config, window: LookbackWindow) -> list[dict]:
     allowed = set(cfg.get("calendar", "min_impact", default=["High", "Medium", "Holiday"]))
     tz = ZoneInfo(cfg.tz)
     today = window.now.astimezone(tz).date()
+    # daily brief = today only; weekly review = the week ahead (today .. +7 days)
+    last_day = today + timedelta(days=7) if window.is_weekly else today
 
     r = requests.get(url, timeout=HTTP_TIMEOUT, headers=UA)
     r.raise_for_status()
@@ -55,10 +57,11 @@ def _fetch_structured(cfg: Config, window: LookbackWindow) -> list[dict]:
             dt = datetime.fromisoformat(raw).astimezone(tz)
         except Exception:  # noqa: BLE001
             continue
-        if dt.date() != today:
+        if not (today <= dt.date() <= last_day):
             continue
         events.append({
             "time": dt.strftime("%H:%M"),
+            "day": dt.strftime("%a %d.%m"),
             "dt": dt,
             "country": ev.get("country", ""),
             "country_pl": COUNTRY_PL.get(ev.get("country", ""), ev.get("country", "")),
@@ -79,15 +82,23 @@ def _fetch_cee_supplement(cfg: Config, window: LookbackWindow) -> str:
     tz = ZoneInfo(cfg.tz)
     today = window.now.astimezone(tz)
     date_iso = today.date().isoformat()
+    if window.is_weekly:
+        end_iso = (today + timedelta(days=7)).date().isoformat()
+        scope = (f"SCHEDULED FOR THE WEEK AHEAD, {date_iso} to {end_iso}, grouped by day "
+                 "(give the date for each)")
+        none_clause = "If there are genuinely no scheduled CEE events this week, say so explicitly."
+    else:
+        scope = f"SCHEDULED FOR TODAY, {date_iso}"
+        none_clause = "If there are genuinely no scheduled CEE events today, say so explicitly."
     prompt = (
-        f"List the economic events SCHEDULED FOR TODAY, {date_iso}, in Poland, Czechia "
+        f"List the economic events {scope}, in Poland, Czechia "
         f"and Hungary: data releases (CPI, GDP, PMI, labour market, current account, "
         f"budget, bond auctions), and any central bank actions — NBP/RPP, CNB, MNB — "
         f"rate decisions, minutes, press conferences or speeches. Give the scheduled "
         f"time in CET (Warsaw time), plus forecast and previous where available. "
-        f"Also list today's notable Fed and ECB speakers or press conferences with times. "
+        f"Also list notable Fed and ECB speakers or press conferences with times. "
         f"If a time is not confirmed, say 'godzina niepotwierdzona'. Tight bullet points. "
-        f"If there are genuinely no scheduled CEE events today, say so explicitly."
+        f"{none_clause}"
     )
     body = {
         "model": cfg.get("perplexity", "model", default="sonar-pro"),
@@ -96,7 +107,7 @@ def _fetch_cee_supplement(cfg: Config, window: LookbackWindow) -> str:
              "Only list events that are actually scheduled; never invent times."},
             {"role": "user", "content": prompt},
         ],
-        "max_tokens": 800,
+        "max_tokens": 1100 if window.is_weekly else 800,
         "temperature": 0.1,
         "search_recency_filter": "week",
     }
@@ -115,6 +126,7 @@ def collect_calendar(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
     if not cfg.get("calendar", "enabled", default=True):
         return {"enabled": False, "events": [], "cee_text": ""}
     result: dict[str, Any] = {"enabled": True, "date": window.now.date().isoformat(),
+                              "weekly": window.is_weekly,
                               "events": [], "cee_text": "", "errors": []}
     try:
         result["events"] = _fetch_structured(cfg, window)
@@ -131,9 +143,13 @@ def collect_calendar(cfg: Config, window: LookbackWindow) -> dict[str, Any]:
 def format_calendar_text(cal: dict, window: LookbackWindow | None = None) -> str:
     if not cal.get("enabled", True):
         return ""
+    weekly = bool(cal.get("weekly"))
     lines: list[str] = []
     date_lbl = polish_date_phrase(window.now) if window else cal.get("date", "")
-    lines.append(f"KALENDARZ NA DZIŚ ({date_lbl}), czas warszawski:")
+    if weekly:
+        lines.append(f"KALENDARZ — NADCHODZĄCY TYDZIEŃ (od {date_lbl}), czas warszawski:")
+    else:
+        lines.append(f"KALENDARZ NA DZIŚ ({date_lbl}), czas warszawski:")
     events = cal.get("events", [])
     if events:
         lines.append("Źródło strukturalne (majors):")
@@ -144,8 +160,9 @@ def format_calendar_text(cal: dict, window: LookbackWindow | None = None) -> str
             if e["previous"]:
                 fp.append(f"poprz. {e['previous']}")
             extra = f" ({', '.join(fp)})" if fp else ""
+            day = f"{e['day']} " if weekly and e.get("day") else ""
             lines.append(
-                f"  - {e['time']}  [{e['country_pl']}] {e['title']} "
+                f"  - {day}{e['time']}  [{e['country_pl']}] {e['title']} "
                 f"— impact {e['impact_pl']}{extra}")
     else:
         lines.append("  (brak zaplanowanych odczytów w feedzie majors lub feed niedostępny)")

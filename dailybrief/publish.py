@@ -23,6 +23,12 @@ EPISODES_KEY = "episodes.json"   # feed-state object in R2 (source of truth in c
 COVER_KEY = "cover.png"          # generated-cover object key in R2
 
 
+def _local_state_file(prefix: str) -> Path:
+    """Per-feed local state file: '' -> episodes.json, 'weekly/' -> weekly_episodes.json."""
+    name = (prefix.replace("/", "_") + "episodes.json") if prefix else "episodes.json"
+    return DATA_DIR / name
+
+
 def _hhmmss(seconds: float | None) -> str:
     if not seconds:
         return "00:40:00"
@@ -30,34 +36,36 @@ def _hhmmss(seconds: float | None) -> str:
     return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
 
 
-def _load_episodes(client=None, bucket: str = "") -> list[dict]:
+def _load_episodes(client=None, bucket: str = "", key: str = EPISODES_KEY,
+                   state_file: Path = EPISODES_FILE) -> list[dict]:
     """In the cloud the runner is ephemeral, so R2 is the source of truth for the
     feed state. Fall back to the local file (useful on a persistent VPS / dev)."""
     if client and bucket:
         try:
-            raw = client.get_object(Bucket=bucket, Key=EPISODES_KEY)["Body"].read()
+            raw = client.get_object(Bucket=bucket, Key=key)["Body"].read()
             return json.loads(raw.decode("utf-8"))
         except Exception as e:  # noqa: BLE001
-            log.info("no episodes.json in R2 yet (%s); starting from local/empty",
-                     type(e).__name__)
-    if EPISODES_FILE.exists():
+            log.info("no %s in R2 yet (%s); starting from local/empty",
+                     key, type(e).__name__)
+    if state_file.exists():
         try:
-            return json.loads(EPISODES_FILE.read_text(encoding="utf-8"))
+            return json.loads(state_file.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             return []
     return []
 
 
-def _save_episodes(eps: list[dict], client=None, bucket: str = "") -> None:
+def _save_episodes(eps: list[dict], client=None, bucket: str = "",
+                   key: str = EPISODES_KEY, state_file: Path = EPISODES_FILE) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     blob = json.dumps(eps, ensure_ascii=False, indent=2)
-    EPISODES_FILE.write_text(blob, encoding="utf-8")
+    state_file.write_text(blob, encoding="utf-8")
     if client and bucket:
         try:
-            client.put_object(Bucket=bucket, Key=EPISODES_KEY,
+            client.put_object(Bucket=bucket, Key=key,
                               Body=blob.encode("utf-8"), ContentType="application/json")
         except Exception as e:  # noqa: BLE001
-            log.warning("failed to upload episodes.json to R2: %s", e)
+            log.warning("failed to upload %s to R2: %s", key, e)
 
 
 # --------------------------------------------------------------------------- #
@@ -94,9 +102,9 @@ def _r2_delete(client, bucket: str, key: str) -> None:
 # Feed
 # --------------------------------------------------------------------------- #
 def _build_feed(cfg: Config, episodes: list[dict], public_base: str,
-                cover_url: str | None = None) -> bytes:
+                cover_url: str | None = None, feed_key: str | None = None) -> bytes:
     pub = cfg.get("publish", default={})
-    feed_url = f"{public_base}/{pub.get('feed_filename', 'feed.xml')}"
+    feed_url = f"{public_base}/{feed_key or pub.get('feed_filename', 'feed.xml')}"
     title = pub.get("podcast_title", "Poranny Brief")
 
     fg = FeedGenerator()
@@ -132,9 +140,9 @@ def _build_feed(cfg: Config, episodes: list[dict], public_base: str,
 
 
 def _ensure_cover(cfg: Config, client, bucket: str, public_base: str,
-                  use_r2: bool) -> str | None:
+                  use_r2: bool, prefix: str = "") -> str | None:
     """Use the configured cover image URL if set; otherwise generate a default
-    cover with Pillow and upload it to R2."""
+    cover with Pillow and upload it to R2. `prefix` keeps per-feed covers apart."""
     pub = cfg.get("publish", default={})
     if pub.get("cover_image_url"):
         return pub["cover_image_url"]
@@ -145,7 +153,8 @@ def _ensure_cover(cfg: Config, client, bucket: str, public_base: str,
     for path in candidates:
         if path.exists():
             is_jpg = path.suffix.lower() in (".jpg", ".jpeg")
-            key, ctype = ("cover.jpg", "image/jpeg") if is_jpg else ("cover.png", "image/png")
+            key, ctype = (prefix + "cover.jpg", "image/jpeg") if is_jpg \
+                else (prefix + "cover.png", "image/png")
             if use_r2:
                 _r2_put(client, bucket, key, path.read_bytes(), ctype)
                 log.info("cover uploaded from %s -> %s", path.name, key)
@@ -160,11 +169,12 @@ def _ensure_cover(cfg: Config, client, bucket: str, public_base: str,
     except Exception as e:  # noqa: BLE001
         log.warning("cover generation failed (%s); feed will have no artwork", e)
         return None
-    local = OUTPUT_DIR / COVER_KEY
+    cover_key = prefix + COVER_KEY
+    local = OUTPUT_DIR / cover_key.replace("/", "_")
     local.write_bytes(png)
     if use_r2:
-        _r2_put(client, bucket, COVER_KEY, png, "image/png")
-        return f"{public_base}/{COVER_KEY}"
+        _r2_put(client, bucket, cover_key, png, "image/png")
+        return f"{public_base}/{cover_key}"
     return local.resolve().as_uri()
 
 
@@ -176,7 +186,14 @@ def publish(cfg: Config, items: list[dict], date_str: str) -> dict[str, Any]:
     Each becomes one episode; all are published into a single feed."""
     pub = cfg.get("publish", default={})
     keep = int(pub.get("keep_episodes", 30))
-    feed_name = pub.get("feed_filename", "feed.xml")
+    # Separate, prefixed object namespace per feed (e.g. "weekly/") so the public
+    # weekly podcast and the private daily feed coexist in one bucket untouched.
+    prefix = (pub.get("key_prefix", "") or "").strip()
+    if prefix and not prefix.endswith("/"):
+        prefix += "/"
+    feed_name = prefix + pub.get("feed_filename", "feed.xml")
+    episodes_key = prefix + EPISODES_KEY
+    state_file = _local_state_file(prefix)
     bucket = cfg.env.get("R2_BUCKET", "daily-brief")
     public_base = (cfg.env.get("R2_PUBLIC_BASE_URL") or "").rstrip("/")
     client = _r2_client(cfg)
@@ -185,15 +202,15 @@ def publish(cfg: Config, items: list[dict], date_str: str) -> dict[str, Any]:
     if not use_r2:
         log.warning("R2 not configured -> LOCAL mode (feed references local files)")
 
-    episodes = _load_episodes(client if use_r2 else None, bucket)
+    episodes = _load_episodes(client if use_r2 else None, bucket, episodes_key, state_file)
     published: list[dict] = []
 
     for it in items:
         ed, script, audio = it["edition"], it["script"], it["audio"]
         eid = ed.get("id", "pl")
         tag = "" if eid in ("", "pl") else f"_{eid}"
-        mp3_key = f"episodes/brief_{date_str}{tag}.mp3"
-        txt_key = f"episodes/brief_{date_str}{tag}.txt"
+        mp3_key = f"{prefix}episodes/brief_{date_str}{tag}.mp3"
+        txt_key = f"{prefix}episodes/brief_{date_str}{tag}.txt"
         episodes = [e for e in episodes if e.get("mp3_key") != mp3_key]  # replace same item
 
         transcript_url = None
@@ -228,9 +245,10 @@ def publish(cfg: Config, items: list[dict], date_str: str) -> dict[str, Any]:
             _r2_delete(client, bucket, old["mp3_key"].rsplit(".", 1)[0] + ".txt")
         log.info("pruned old episode %s [%s]", old["date"], old.get("edition", ""))
 
-    cover_url = _ensure_cover(cfg, client, bucket, public_base, use_r2)
-    feed_bytes = _build_feed(cfg, episodes, public_base or OUTPUT_DIR.as_uri(), cover_url)
-    feed_local = OUTPUT_DIR / feed_name
+    cover_url = _ensure_cover(cfg, client, bucket, public_base, use_r2, prefix)
+    feed_bytes = _build_feed(cfg, episodes, public_base or OUTPUT_DIR.as_uri(),
+                             cover_url, feed_key=feed_name)
+    feed_local = OUTPUT_DIR / feed_name.replace("/", "_")
     feed_local.write_bytes(feed_bytes)
 
     feed_url = None
@@ -241,6 +259,6 @@ def publish(cfg: Config, items: list[dict], date_str: str) -> dict[str, Any]:
     else:
         log.info("feed written locally -> %s", feed_local)
 
-    _save_episodes(episodes, client if use_r2 else None, bucket)
+    _save_episodes(episodes, client if use_r2 else None, bucket, episodes_key, state_file)
     return {"mode": mode, "feed_url": feed_url, "feed_local": feed_local,
             "episodes": len(episodes), "items": published}

@@ -395,5 +395,110 @@ xml2 = publish._build_feed(cfg, two, "https://pub-xxxx.r2.dev",
 check("feed has 2 items (PL+EN)", xml2.count("<item>") == 2, str(xml2.count("<item>")))
 check("feed includes [EN] item", "[EN]" in xml2)
 
+print("== weekly: window + config extends ==")
+from dailybrief.util import ROOT, compute_weekly_window  # noqa: E402
+wk_ref = datetime(2026, 6, 24, 18, 0, tzinfo=ZoneInfo(tz))   # a Wednesday eve
+wwin = compute_weekly_window(tz, 7, reference=wk_ref)
+check("weekly window kind=weekly + is_weekly", wwin.kind == "weekly" and wwin.is_weekly)
+check("weekly window spans ~7 days", abs((wwin.now - wwin.start).total_seconds() - 7 * 86400) < 1)
+check("weekly Perplexity -> 'week' recency",
+      npx._time_filter(wwin) == {"search_recency_filter": "week"}, str(npx._time_filter(wwin)))
+
+wcfg = load_config(ROOT / "config_weekly.yaml")
+check("weekly config: cadence=weekly", wcfg.get("general", "cadence") == "weekly")
+check("weekly config: 35 min target", wcfg.target_minutes == 35, str(wcfg.target_minutes))
+check("weekly inherits pronunciations (extends)",
+      "hawkish" in (wcfg.get("voice", "pronunciations", default={}) or {}))
+check("weekly inherits market universe (extends)",
+      bool(wcfg.get("markets", "rates_cores", default=[])))
+check("weekly research enabled + sources",
+      wcfg.get("research", "enabled") is True and len(wcfg.get("research", "sources", default=[])) >= 3)
+check("weekly collectors: social off, research on",
+      wcfg.get("collectors", "social") is False and wcfg.get("collectors", "research") is True)
+check("weekly publish key_prefix", wcfg.get("publish", "key_prefix") == "weekly/")
+check("weekly perplexity topics_include incl cee_research",
+      "cee_research" in (wcfg.get("perplexity", "topics_include", default=[]) or []))
+_war = wcfg.get("news", "allow_domains", default={}).get("cee_research", [])
+check("weekly cee_research allowlist present + <=20", bool(_war) and len(_war) <= 20, str(len(_war)))
+check("weekly inherits daily cee allowlist (deep-merge)",
+      bool(wcfg.get("news", "allow_domains", default={}).get("cee")))
+_weds = wcfg.get("editions", default=[])
+check("weekly editions use weekly prompts",
+      len(_weds) == 2 and all("weekly" in e.get("dialogue_prompt", "") for e in _weds))
+_wsec_ids = [s["id"] for s in wcfg.sections]
+check("weekly sections incl rates + week_ahead + research_views",
+      {"rates", "week_ahead", "research_views"} <= set(_wsec_ids), str(_wsec_ids))
+
+print("== weekly: research_portals (RSS/Atom digest) ==")
+from dailybrief.collectors import research_portals as rp  # noqa: E402
+_rss = """<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Feed</title>
+<item><title>Poland rates: NBP seen on hold</title><link>https://think.ing.com/a</link>
+<pubDate>Mon, 22 Jun 2026 08:00:00 GMT</pubDate>
+<description>&lt;p&gt;POLGB yields fell 5bp.&lt;/p&gt;</description></item>
+<item><title>US tech earnings preview</title><link>https://x/b</link>
+<pubDate>Mon, 22 Jun 2026 09:00:00 GMT</pubDate><description>Nasdaq</description></item>
+<item><title>Old Poland note</title><link>https://x/c</link>
+<pubDate>Wed, 01 Jan 2020 08:00:00 GMT</pubDate><description>stale</description></item>
+</channel></rss>"""
+_items = rp.parse_feed(_rss)
+check("RSS parsed (3 items)", len(_items) == 3, str(len(_items)))
+check("RSS strips HTML in summary", _items[0]["summary"] == "POLGB yields fell 5bp.", _items[0]["summary"])
+check("RSS link + date parsed", _items[0]["link"] == "https://think.ing.com/a"
+      and _items[0]["date"] is not None)
+_sel = rp.select_items(_items, wwin, ["poland"], 10)
+check("select keeps in-window keyword match only", [i["title"] for i in _sel] == ["Poland rates: NBP seen on hold"],
+      str([i["title"] for i in _sel]))
+_atom = ('<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>CNB holds rates</title>'
+         '<link href="https://www.cnb.cz/x" rel="alternate"/>'
+         '<updated>2026-06-23T10:00:00Z</updated><summary>statement</summary></entry></feed>')
+_aitems = rp.parse_feed(_atom)
+check("Atom parsed (link href + updated)", len(_aitems) == 1
+      and _aitems[0]["link"] == "https://www.cnb.cz/x" and _aitems[0]["date"] is not None,
+      str(_aitems))
+_rtext = rp.format_research_text({"enabled": True, "max_total_chars": 18000, "sources": [
+    {"name": "ING THINK", "lang": "en", "items": [
+        {"title": "Poland rates", "link": "https://think.ing.com/a", "date": "2026-06-22",
+         "summary": "POLGB yields fell."}]}]})
+check("research text: source + dated item + summary",
+      "ING THINK" in _rtext and "[2026-06-22]" in _rtext and "POLGB yields fell." in _rtext, _rtext[:160])
+check("research text empty when disabled", rp.format_research_text({"enabled": False}) == "")
+
+print("== weekly: news query set + market W/W + publish prefix ==")
+_qs = npx._query_set(wcfg)
+check("weekly query set adds cee_research, drops crypto",
+      "cee_research" in _qs and "crypto" not in _qs, str(sorted(_qs)))
+from dailybrief.collectors.market_data import _prev_by_lag  # noqa: E402
+_vd = [("2026-06-24", 4.30), ("2026-06-23", 4.28), ("2026-06-17", 4.10), ("2026-06-16", 4.05)]
+check("market W/W prev picks ~7d-ago value", _prev_by_lag(_vd, 7) == 4.10, str(_prev_by_lag(_vd, 7)))
+check("publish state file per-prefix",
+      publish._local_state_file("weekly/").name == "weekly_episodes.json"
+      and publish._local_state_file("").name == "episodes.json")
+_wxml = publish._build_feed(wcfg, fake_eps, "https://pub-xxxx.r2.dev", None,
+                            feed_key="weekly/feed.xml").decode("utf-8")
+check("weekly feed self-link uses weekly/feed.xml", "weekly/feed.xml" in _wxml)
+check("weekly feed title", "Tygodnik Rynkowy CEE" in _wxml)
+
+print("== weekly: calendar week-ahead ==")
+soon_ev = (now_w + timedelta(days=3)).replace(hour=10, minute=0, second=0, microsecond=0)
+fake_week = [
+    {"title": "Poland CPI", "country": "PLN",
+     "date": now_w.replace(hour=10, minute=0, second=0, microsecond=0).astimezone(eastern).isoformat(),
+     "impact": "High", "forecast": "4.0%", "previous": "4.2%"},
+    {"title": "Czech rate decision", "country": "CZK",
+     "date": soon_ev.astimezone(eastern).isoformat(),
+     "impact": "High", "forecast": "", "previous": ""},
+    {"title": "Way out event", "country": "USD",
+     "date": (now_w + timedelta(days=20)).astimezone(eastern).isoformat(),
+     "impact": "High", "forecast": "", "previous": ""},
+]
+ec.requests.get = lambda *a, **k: _FakeResp(fake_week)  # type: ignore
+wcal = ec.collect_calendar(wcfg, compute_weekly_window(cfg.tz, 7))
+check("weekly calendar flagged weekly", wcal.get("weekly") is True)
+check("weekly calendar keeps today + +3d, drops +20d", len(wcal["events"]) == 2, str(len(wcal["events"])))
+check("weekly events carry a day label", all(e.get("day") for e in wcal["events"]))
+wcaltxt = ec.format_calendar_text(wcal)
+check("weekly calendar header is week-ahead", "NADCHODZĄCY TYDZIEŃ" in wcaltxt, wcaltxt[:80])
+
 print(f"\n== RESULT: {PASS} passed, {FAIL} failed ==")
 sys.exit(1 if FAIL else 0)

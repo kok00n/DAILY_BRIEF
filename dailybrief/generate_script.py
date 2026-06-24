@@ -141,22 +141,33 @@ def _stream_text(client: anthropic.Anthropic, attempts: int = 6, **kwargs) -> st
 
 def _user_message(window: LookbackWindow, research_text: str, lang: str = "pl") -> str:
     if lang == "en":
-        win = ("the last 48 hours (the weekend)" if window.is_monday_after_weekend
-               else "the last 24 hours")
+        if window.is_weekly:
+            win = "the past week"
+            src = ("research-desk analyses, market data, news and the week-ahead calendar")
+        else:
+            win = ("the last 48 hours (the weekend)" if window.is_monday_after_weekend
+                   else "the last 24 hours")
+            src = "market data, news, FinTwit/analysts"
         return (
             f"Today is {window.now.strftime('%A, %d %B %Y')}. Prepare a brief covering "
-            f"events from {win}.\n\n"
-            "Below is the source material (market data, news, FinTwit/analysts). Use it, "
+            f"{win}.\n\n"
+            f"Below is the source material ({src}). Use it, "
             "synthesise, connect the threads and make sense of them — do not read it point "
-            "by point. If something is missing, say so briefly.\n\n"
+            "by point. Skip silently anything with no content; never invent.\n\n"
             f"{research_text}"
         )
+    if window.is_weekly:
+        win = "miniony tydzień"
+        src = "analizy ośrodków badawczych, dane rynkowe, newsy i kalendarz na nadchodzący tydzień"
+    else:
+        win = window.label_pl
+        src = "dane rynkowe, newsy, FinTwit/analitycy"
     return (
         f"Dzisiaj jest {polish_date_phrase(window.now)}. Przygotuj brief obejmujący "
-        f"wydarzenia z {window.label_pl}.\n\n"
-        f"Poniżej materiał źródłowy (dane rynkowe, newsy, FinTwit/analitycy). "
+        f"{win}.\n\n"
+        f"Poniżej materiał źródłowy ({src}). "
         f"Wykorzystaj go, syntetyzuj, łącz wątki i nadawaj im sens — nie czytaj go "
-        f"punkt po punkcie. Jeśli czegoś brakuje, powiedz to krótko.\n\n"
+        f"punkt po punkcie. Temat bez treści pomiń w ciszy; nie zmyślaj.\n\n"
         f"{research_text}"
     )
 

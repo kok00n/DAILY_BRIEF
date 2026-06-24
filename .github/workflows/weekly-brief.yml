@@ -1,0 +1,77 @@
+name: Weekly Brief (CEE)
+
+on:
+  workflow_dispatch:             # manual "Run workflow" button
+    inputs:
+      mode:
+        description: "Run mode"
+        type: choice
+        default: collect-only    # safe default: data ingestion only, no paid script gen
+        options:
+          - collect-only         # research RSS + market/news/calendar only; no Claude/TTS/publish
+          - full                 # produce + publish the weekly episodes (Claude + edge-tts + R2)
+  schedule:
+    # GitHub cron is UTC. 16:00 UTC Sunday = 18:00 CEST (summer) / 17:00 CET (winter).
+    # The Sunday-evening CEE research review (covers the past 7 days + week ahead).
+    # GitHub cron is best-effort (can lag 5-30 min); the run takes ~8-15 min.
+    - cron: "0 16 * * 0"
+
+concurrency:
+  group: weekly-brief
+  cancel-in-progress: false
+
+jobs:
+  weekly:
+    runs-on: ubuntu-latest
+    # bilingual dialogue: 2x Opus script + 2x edge-tts + collect (RSS+APIs) + publish.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build & publish weekly brief
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          STOOQ_API_KEY: ${{ secrets.STOOQ_API_KEY }}
+          CNB_API_KEY: ${{ secrets.CNB_API_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+        # scheduled runs have no inputs -> mode resolves to full; manual runs honour
+        # the dropdown (defaults to collect-only so a click can't accidentally bill Claude).
+        run: |
+          if [ "${{ inputs.mode }}" = "collect-only" ]; then
+            echo "MODE: collect-only (weekly data ingestion check; no script/audio/publish)"
+            python run_brief.py --config config_weekly.yaml --collect-only
+          else
+            echo "MODE: full"
+            python run_brief.py --config config_weekly.yaml
+          fi
+
+      - name: Upload script / research / logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-debug-${{ github.run_id }}
+          path: |
+            output/*.log
+            output/research_*.txt
+            output/script_*.txt
+            output/dossier_*.json
+          if-no-files-found: ignore
+          retention-days: 7
